@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+
+main()
+{
+  update_brew
+  update_yay
+  update_vim
+
+  log "done"
+}
+
+update_brew()
+{
+  if [ "$(uname)" = "Darwin" ]; then
+    log "homebrew"
+    brew update
+    brew upgrade
+    brew cleanup
+  fi
+}
+
+update_yay()
+{
+  if [ "$(uname)" = "Linux" ]; then
+    log "yay"
+    yay -Syu --noconfirm
+  fi
+}
+
+update_vim()
+{
+  log "vim"
+  nvim +"lua require('lazy').update({wait=true})" +qa
+}
+
+log()
+{
+  msg="$1"
+  echo -e "$(tput setaf 4)[update] $msg$(tput sgr0)"
+}
+
+main

@@ -110,8 +110,6 @@ alias vimrc='vim ~/.vimrc'
 alias ovim='/usr/local/bin/vim'
 alias vim='nvim'
 
-alias update='~/.bin/update'
-
 alias ssh_core='ssh -i ~/.ssh/liz/portal-dev-or.pem ubuntu@54.70.173.252'
 alias ssh_lg_api='ssh -i ~/.ssh/liz/portal-dev-or.pem ubuntu@44.232.21.7'
 alias ssh_whitelabel='ssh -i ~/.ssh/liz/portal-dev-or.pem ubuntu@44.232.205.154'
