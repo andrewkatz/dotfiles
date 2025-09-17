@@ -44,7 +44,7 @@ vim.api.nvim_set_keymap("v", "/", "/\\v", { noremap = true })
 vim.api.nvim_set_keymap("n", "<leader>q", ":nohlsearch<CR>", { noremap = true })
 
 -- Use system clipboard
-vim.opt.clipboard:append("unnamedplus")
+vim.opt.clipboard = "unnamed"
 
 -- Highligh cursor line number
 vim.opt.cursorline = true
@@ -93,5 +93,42 @@ vim.g.phpfmt_standard = "PSR2"
 -- Gdscript
 vim.cmd([[au FileType gdscript setlocal tabstop=4 shiftwidth=4 noexpandtab]])
 
+-- Sort YAML files on buffer write
+-- vim.api.nvim_set_keymap(
+--   "n",
+--   "<leader>s",
+--   ":%! yq --prettyPrint --indent 2 'sort_keys(..)' -<CR>",
+--   { noremap = true, silent = true }
+-- )
+-- vim.cmd("autocmd BufWritePre *.yml :%! yq --prettyPrint --indent 2 'sort_keys(..)' -")
+
 -- Auto save on focus lost
 vim.cmd("autocmd BufLeave,FocusLost * silent! wall")
+
+-- Notify when recording a macro
+local autocmd = vim.api.nvim_create_autocmd
+local augroup = vim.api.nvim_create_augroup
+
+local macro_reg = nil
+
+autocmd({ "RecordingEnter", "RecordingLeave" }, {
+  desc = "Notify when recording a macro",
+  group = augroup("macro-notify", {}),
+  callback = function(ev)
+    if ev.event == "RecordingEnter" then
+      macro_reg = vim.fn.reg_recording()
+      vim.notify("Recording to register @" .. macro_reg, vim.log.levels.INFO, {
+        title = "Macro",
+        timeout = 5000,
+        hide_from_history = false,
+      })
+    elseif ev.event == "RecordingLeave" and macro_reg then
+      vim.notify("Recorded to register @" .. macro_reg, vim.log.levels.INFO, {
+        title = "Macro",
+        timeout = 5000,
+        hide_from_history = false,
+      })
+      macro_reg = nil
+    end
+  end,
+})
