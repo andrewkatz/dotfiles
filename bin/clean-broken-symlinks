@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+
+source "$(dirname "$0")/lib/logging.sh"
+
+remove_broken_links() {
+  local path="$1"
+  local pattern="$2"
+  local find_args="$3"
+
+  find "$path" $find_args -type l | while read -r link; do
+    if [ ! -e "$link" ]; then
+      target=$(readlink "$link")
+      case "$target" in
+        $pattern)
+          log "Removing broken symlink: $link -> $target"
+          rm "$link"
+          ;;
+      esac
+    fi
+  done
+}
+
+clean_broken_symlinks() {
+  remove_broken_links ~/.config "*dotfiles*" ""
+  remove_broken_links ~ "*dotfiles/dot-config*" "-maxdepth 1"
+}
+
+# If script is run directly (not sourced), execute the main function
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  clean_broken_symlinks
+fi
