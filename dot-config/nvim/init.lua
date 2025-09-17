@@ -44,7 +44,7 @@ vim.api.nvim_set_keymap("v", "/", "/\\v", { noremap = true })
 vim.api.nvim_set_keymap("n", "<leader>q", ":nohlsearch<CR>", { noremap = true })
 
 -- Use system clipboard
-vim.opt.clipboard = "unnamed"
+vim.opt.clipboard = "unnamedplus"
 
 -- Highligh cursor line number
 vim.opt.cursorline = true
