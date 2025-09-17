@@ -1,0 +1,8 @@
+cursor-style = underline
+font-feature = -calt
+font-size = 11
+shell-integration-features = no-cursor
+theme = carbonfox
+window-theme = ghostty
+adw-toolbar-style = flat
+app-notifications = false
