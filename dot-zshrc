@@ -98,7 +98,7 @@ alias be='bundle exec'
 alias fs='foreman start'
 alias rdm='rails db:migrate'
 
-alias c="cd"
+alias cd="z"
 alias ls="eza"
 alias ll="eza -lah"
 alias k="kill -9"
@@ -130,9 +130,9 @@ alias es='expressvpnctl status'
 
 d()
 {
-  cd ~/dev/$1
+  cd ~/Work/$1
 }
-compdef "_files -W \"$HOME/dev\"" d
+compdef "_files -W \"$HOME/Work\"" d
 
 tmp()
 {
