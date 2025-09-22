@@ -44,7 +44,7 @@ get_end_of_day() {
   if [[ "$OSTYPE" == "darwin"* ]]; then
     date -j -f "%Y-%m-%d" "$date_input" "+%Y-%m-%dT23:59:59Z"
   else
-    date -d "$date_input 23:59:59" +"%Y-%m-%dT%H:%M:%SZ"
+    date -d "$date_input 23:59:59" +"%Y-%m-%d %H:%M"
   fi
 }
 

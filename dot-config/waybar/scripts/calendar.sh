@@ -6,9 +6,11 @@ tooltip=$(echo "$data" | jq -r '.tooltip')
 
 # strip < and > from the title
 title=$(echo "$title" | sed 's/[<>]//g')
+tooltip=$(echo "$tooltip" | sed 's/[<>]//g')
 
 # change & to &amp;
 title=$(echo "$title" | sed 's/&/\&amp;/g')
+tooltip=$(echo "$tooltip" | sed 's/&/\&amp;/g')
 
 # Use jq to properly encode the JSON output (handles newlines correctly) - compact output
 jq -nc --arg text "$title" --arg tooltip "$tooltip" '{"text":$text,"tooltip":$tooltip}'

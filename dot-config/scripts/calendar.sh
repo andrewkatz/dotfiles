@@ -3,7 +3,7 @@
 source "$HOME/.config/scripts/utils.sh"
 
 # Get current time in ISO format
-current_time=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+current_time=$(date +"%Y-%m-%d %H:%M")
 # Get today's date for filtering
 today=$(date +"%Y-%m-%d")
 # Get end of today
