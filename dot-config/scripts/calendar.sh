@@ -55,7 +55,7 @@ for ((i=1; i<${#lines[@]} && events_found<4; i++)); do
     # If the start time is more than 15 minutes in the past, skip it
     fifteen_minutes_ago=$(date_from_string "15 minutes ago")
     start_time_epoch=$(date_from_string "$start_date $start_time")
-    if [[ $fifteen_minutes_ago -lt $start_time_epoch ]] && [[ "$title" != "busy" ]]; then
+    if [[ $fifteen_minutes_ago -lt $start_time_epoch ]] && [[ "$title" != "Unavailable" ]]; then
       # Store the first event's URL for the main output
       if [[ $events_found -eq 0 ]]; then
         next_event_url="$conference_url"
