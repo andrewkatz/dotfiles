@@ -37,15 +37,24 @@ hide_category = true
 [builtins.bookmarks]
 # hidden = true
 prefix = ";"
+icon = "user-bookmarks"
 
 [[builtins.bookmarks.entries]]
-label = "Omarchy - Github"
+label = "Omarchy - GitHub"
 url = "https://github.com/basecamp/omarchy"
 keywords = ["omarchy", "github"]
 
 [[builtins.bookmarks.entries]]
 label = "VIA - Mission Control Jobs"
 url = "https://via.giantpartners.com/admin/jobs"
+
+[[builtins.bookmarks.entries]]
+label = "VIA - GitHub"
+url = "https://github.com/giant-partners/platform"
+
+[[builtins.bookmarks.entries]]
+label = "Comfortly - GitHub"
+url = "https://github.com/getcomfortly/inn_management"
 
 [[builtins.bookmarks.entries]]
 label = "GP Backlog - Github"
