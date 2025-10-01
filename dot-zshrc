@@ -127,6 +127,7 @@ alias ssh_lg_api='ssh -i ~/.ssh/liz/portal-dev-or.pem ubuntu@44.232.21.7'
 alias ssh_whitelabel='ssh -i ~/.ssh/liz/portal-dev-or.pem ubuntu@44.232.205.154'
 alias ssh_data_tunnel='ssh andrewkatz@data.giantpartners.com'
 alias ssh_sftp='ssh -i ~/.ssh/liz/portal-dev-or.pem ubuntu@34.209.57.22'
+alias ssh_staging='ssh -J andrewkatz@data.giantpartners.com -A ubuntu@172.30.0.93'
 
 alias t='terraform'
 alias ti='terraform init'
