@@ -60,6 +60,10 @@ url = "https://github.com/getcomfortly/inn_management"
 label = "GP Backlog - Github"
 url = "https://github.com/orgs/giant-partners/projects/4/views/1"
 
+[[builtins.bookmarks.entries]]
+label = "Snowflake"
+url = "https://app.snowflake.com/odnjgyy/bta87963/w16SysW37Dsq#query"
+
 [builtins.calc]
 name = "Calculator"
 icon = ""
