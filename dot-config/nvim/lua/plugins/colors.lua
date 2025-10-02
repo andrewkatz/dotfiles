@@ -1,6 +1,9 @@
 return {
   {
-    "lilydjwg/colorizer",
+    "norcalli/nvim-colorizer.lua",
+    config = function()
+      require("colorizer").setup()
+    end,
   },
   {
     "EdenEast/nightfox.nvim",
@@ -11,11 +14,3 @@ return {
     end,
   },
 }
--- return {
---   "dracula/vim",
---   lazy = false,
---   priority = 1000,
---   config = function()
---     vim.cmd([[colorscheme dracula]])
---   end,
--- }
