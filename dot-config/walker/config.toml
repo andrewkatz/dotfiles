@@ -62,7 +62,7 @@ url = "https://github.com/orgs/giant-partners/projects/4/views/1"
 
 [[builtins.bookmarks.entries]]
 label = "Snowflake"
-url = "https://app.snowflake.com/odnjgyy/bta87963/w16SysW37Dsq#query"
+url = "https://app.snowflake.com/odnjgyy/bta87963/#/workspaces/ws/USER%24/PUBLIC/DEFAULT%24"
 
 [builtins.calc]
 name = "Calculator"
