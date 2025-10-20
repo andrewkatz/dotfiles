@@ -58,6 +58,7 @@ export PATH=./bin:$PATH
 export PATH=~/.bin:$PATH
 export PATH="$HOME/.yarn/bin:$HOME/.config/yarn/global/node_modules/.bin:$PATH"
 export PATH=${PATH}:~/.local/bin
+export PATH=${PATH}:~/.config/scripts
 
 export EDITOR=nvim
 
