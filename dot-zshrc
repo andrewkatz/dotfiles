@@ -110,6 +110,7 @@ alias b='bundle'
 alias be='bundle exec'
 alias fs='foreman start'
 alias rdm='rails db:migrate'
+alias pc='bin/production-console'
 
 alias cd="z"
 alias ls="eza"
