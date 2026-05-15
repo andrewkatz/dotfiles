@@ -1,0 +1,11 @@
+# Auto-start Hyprland on Linux login
+if [[ "$(uname)" == "Linux" ]]; then
+  if uwsm check may-start -g 120 > /dev/null; then
+    exec uwsm start hyprland-uwsm.desktop
+  fi
+fi
+
+# OrbStack (macOS only, login shell)
+if [[ "$(uname)" == "Darwin" ]] ; then
+  source ~/.orbstack/shell/init.zsh 2>/dev/null || :
+fi

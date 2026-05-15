@@ -69,9 +69,16 @@ init_tpm() {
   fi
 }
 
-init_goose() {
-  if [ ! -d "$HOME/.config/goose" ] ; then
-    mkdir -p $HOME/.config/goose
+install_platform_overlay() {
+  local platform=""
+  if [ "$(uname)" = "Darwin" ]; then
+    platform="darwin"
+  elif [ "$(uname)" = "Linux" ]; then
+    platform="linux"
+  fi
+  if [ -n "$platform" ] && [ -d "$platform" ]; then
+    log "Installing $platform overlay..."
+    (cd "$platform" && stow --verbose=2 --dotfiles --adopt -t "$HOME" .)
   fi
 }
 
@@ -79,8 +86,8 @@ install_package_manager
 install_stow
 change_shell_to_zsh
 init_tpm
-init_goose
 
 log "Installing dotfiles using stow..."
 stow --verbose=2 --dotfiles --adopt -t $HOME .
+install_platform_overlay
 clean_broken_symlinks

@@ -1,0 +1,16 @@
+bin
+README.md
+^/CLAUDE.md
+Brewfile
+Brewfile.lock.json
+Archfile
+Archfile.lock
+^/.config/tmux/plugins
+.machine_name
+.gitignore
+.claude
+dot-zsh/compcache
+hooks
+darwin
+docs
+linux

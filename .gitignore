@@ -1,1 +1,6 @@
+.machine_name
+.claude/
+dot-zsh/compcache
+/dot-agents/.skill-lock.json
+dot-config/systemd/user/graphical-session.target.wants/
 dot-config/tmux/plugins/*

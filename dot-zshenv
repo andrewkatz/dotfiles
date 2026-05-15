@@ -1,0 +1,22 @@
+# Homebrew (must be early so brew-installed tools are found)
+if [ -f /opt/homebrew/bin/brew ]; then
+  eval "$(/opt/homebrew/bin/brew shellenv)"
+fi
+
+# Claude Code's shell snapshots don't capture chpwd/precmd hooks, so the
+# `mise activate zsh` in .zshrc can't re-resolve tool versions when Claude
+# cds into a project. Use shim-based activation only inside Claude Code.
+if [ -n "$CLAUDECODE" ] && command -v mise &> /dev/null; then
+  eval "$(mise activate zsh --shims)"
+fi
+
+export XDG_CONFIG_HOME="$HOME/.config"
+export EDITOR="nvim"
+export OP_BIOMETRIC_UNLOCK_ENABLED=true
+
+# Claude Code's shell snapshots don't capture chpwd_functions, so zoxide's
+# doctor falsely warns on every cd. Silence it only inside Claude Code.
+[ -n "$CLAUDECODE" ] && export _ZO_DOCTOR=0
+
+export PATH="./bin:$HOME/.bin:$HOME/.local/bin:$HOME/bin:$HOME/.config/scripts/:$HOME/.yarn/bin:$HOME/.config/yarn/global/node_modules/.bin:$PATH"
+typeset -U PATH
