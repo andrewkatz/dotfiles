@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Claude Code WorktreeCreate hook
+# Bridges Claude Code's worktree creation to worktrunk (wt)
+#
+# Input (JSON on stdin): worktree_path, base_ref, cwd, session_id
+# Output (stdout): the actual worktree path created by wt
+
+INPUT=$(cat)
+BASE_REF=$(echo "$INPUT" | jq -r '.base_ref // "main"')
+CWD=$(echo "$INPUT" | jq -r '.cwd')
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id')
+
+BRANCH="claude/${SESSION_ID}/$(uuidgen | tr '[:upper:]' '[:lower:]' | cut -d- -f1)"
+
+# Create worktree via wt (fall back to switch if branch already exists)
+if ! /opt/homebrew/bin/wt switch --create "$BRANCH" --base "$BASE_REF" --no-cd -y -C "$CWD" >&2 2>&1; then
+    /opt/homebrew/bin/wt switch "$BRANCH" --no-cd -y -C "$CWD" >&2
+fi
+
+# Find the worktree path for the branch we just created
+WORKTREE_PATH=$(git -C "$CWD" worktree list --porcelain | awk -v branch="$BRANCH" '
+    /^worktree / { path = substr($0, 10) }
+    /^branch refs\/heads\// {
+        b = substr($0, 19)
+        if (b == branch) { print path; exit }
+    }
+')
+
+if [ -z "$WORKTREE_PATH" ]; then
+    echo "Error: could not find worktree path for branch $BRANCH" >&2
+    exit 1
+fi
+
+echo "$WORKTREE_PATH"

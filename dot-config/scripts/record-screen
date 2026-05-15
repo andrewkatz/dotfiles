@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+#
+# record-screen
+# Toggle screen recording on Hyprland/Wayland.
+#
+# Uses gpu-screen-recorder (DRM/KMS + VAAPI HW encoding) — bypasses both
+# xdg-desktop-portal and the wlr-screencopy capture path that wf-recorder
+# fails on with current Hyprland ("Failed to copy frame" loops).
+# slurp picks the region. On stop, always saves an MP4; optionally also a GIF
+# (rendered through gifski for quality).
+#
+# Usage:
+#   record-screen mp4   # start recording, save MP4 on stop (default)
+#   record-screen gif   # start recording, save MP4 + GIF on stop
+#   record-screen       # same as mp4
+#
+# Re-running while a recording is active stops it (regardless of which mode
+# was passed — the mode chosen at start wins).
+
+set -euo pipefail
+
+mode="${1:-mp4}"
+out_dir="$HOME/Pictures/Recordings"
+state_dir="${XDG_RUNTIME_DIR:-/tmp}/record-screen"
+pidfile="$state_dir/pid"
+modefile="$state_dir/mode"
+videofile="$state_dir/recording.mp4"
+logfile="$state_dir/log"
+
+mkdir -p "$out_dir" "$state_dir"
+
+stop_recording() {
+    local pid saved_mode ts mp4_out gif_out
+    pid="$(cat "$pidfile")"
+    saved_mode="$(cat "$modefile")"
+
+    kill -SIGINT "$pid" 2>/dev/null || true
+    while kill -0 "$pid" 2>/dev/null; do sleep 0.1; done
+    rm -f "$pidfile" "$modefile"
+
+    ts="$(date +%Y%m%d-%H%M%S)"
+    mp4_out="$out_dir/recording-$ts.mp4"
+    mv "$videofile" "$mp4_out"
+
+    if [[ "$saved_mode" == "gif" ]]; then
+        notify-send "Screen recording" "Converting to GIF..."
+        gif_out="$out_dir/recording-$ts.gif"
+        # 15fps is plenty for product demos and keeps file size sane
+        ffmpeg -y -i "$mp4_out" -r 15 -f yuv4mpegpipe -pix_fmt yuv420p - 2>/dev/null \
+            | gifski --fps 15 -o "$gif_out" -
+        notify-send "Screen recording" "Saved:\n$mp4_out\n$gif_out"
+    else
+        notify-send "Screen recording" "Saved: $mp4_out"
+    fi
+}
+
+start_recording() {
+    local region gsr_region pid
+    region="$(slurp)" || { notify-send "Screen recording" "Cancelled"; exit 0; }
+
+    # slurp output: "X,Y WxH"  →  gpu-screen-recorder wants "WxH+X+Y"
+    gsr_region="$(awk '{split($1,xy,","); print $2 "+" xy[1] "+" xy[2]}' <<<"$region")"
+
+    rm -f "$videofile" "$logfile"
+    # setsid detaches from the script's session so the recorder doesn't get
+    # SIGHUP'd when this script exits. The inner shell records its own PID
+    # before exec'ing so we have a stable handle to signal on stop.
+    setsid bash -c "echo \$\$ > '$pidfile'; exec gpu-screen-recorder -w region -region '$gsr_region' -f 30 -o '$videofile'" \
+        </dev/null >"$logfile" 2>&1 &
+    disown
+
+    # Give wf-recorder a moment to actually start; bail loudly if it didn't.
+    sleep 0.4
+    if [[ ! -f "$pidfile" ]] || ! kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+        notify-send -u critical "Screen recording" "wf-recorder failed to start. See $logfile"
+        rm -f "$pidfile" "$modefile"
+        exit 1
+    fi
+
+    echo "$mode" > "$modefile"
+    notify-send "Screen recording" "Recording (${mode}) — re-press hotkey to stop"
+}
+
+if [[ -f "$pidfile" ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+    stop_recording
+else
+    rm -f "$pidfile" "$modefile"
+    start_recording
+fi

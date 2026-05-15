@@ -1,0 +1,48 @@
+#!/bin/bash
+#
+# cleanup-hyprshot.sh
+# Removes old hyprshot screenshots from the home directory
+#
+# Default: removes screenshots older than 30 days
+# Usage: cleanup-hyprshot.sh [days]
+#   e.g., cleanup-hyprshot.sh 7  (removes screenshots older than 7 days)
+
+# Number of days to keep (default: 30)
+DAYS_TO_KEEP=${1:-30}
+
+# Screenshot directory (hyprshot saves to home directory by default)
+SCREENSHOT_DIR="$HOME"
+
+# Pattern for hyprshot screenshots
+PATTERN="*_hyprshot.png"
+
+# Log file (optional - comment out if you don't want logging)
+LOG_FILE="$HOME/.cache/hyprshot-cleanup.log"
+
+# Create log directory if it doesn't exist
+mkdir -p "$(dirname "$LOG_FILE")"
+
+# Function to log messages
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+}
+
+# Count screenshots before cleanup
+BEFORE_COUNT=$(find "$SCREENSHOT_DIR" -maxdepth 1 -type f -name "$PATTERN" 2>/dev/null | wc -l)
+
+log "Starting hyprshot cleanup - removing screenshots older than $DAYS_TO_KEEP days"
+log "Found $BEFORE_COUNT hyprshot screenshots in $SCREENSHOT_DIR"
+
+# Find and remove old screenshots
+DELETED=0
+while IFS= read -r -d '' file; do
+    rm -f "$file"
+    DELETED=$((DELETED + 1))
+    log "Deleted: $(basename "$file")"
+done < <(find "$SCREENSHOT_DIR" -maxdepth 1 -type f -name "$PATTERN" -mtime "+$DAYS_TO_KEEP" -print0 2>/dev/null)
+
+# Count screenshots after cleanup
+AFTER_COUNT=$(find "$SCREENSHOT_DIR" -maxdepth 1 -type f -name "$PATTERN" 2>/dev/null | wc -l)
+
+log "Cleanup complete - deleted $DELETED screenshots"
+log "Remaining screenshots: $AFTER_COUNT"

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Claude Code WorktreeRemove hook
+# Bridges Claude Code's worktree removal to worktrunk (wt)
+#
+# Input (JSON on stdin): worktree_path, cwd, session_id
+
+INPUT=$(cat)
+WORKTREE_PATH=$(echo "$INPUT" | jq -r '.worktree_path')
+CWD=$(echo "$INPUT" | jq -r '.cwd')
+
+# Find branch name for this worktree path
+BRANCH=$(git -C "$CWD" worktree list --porcelain | awk -v path="$WORKTREE_PATH" '
+    /^worktree / { p = substr($0, 10) }
+    /^branch refs\/heads\// {
+        if (p == path) { print substr($0, 19); exit }
+    }
+')
+
+if [ -z "$BRANCH" ]; then
+    # Worktree may already be gone
+    exit 0
+fi
+
+# Remove via wt: -f for untracked files, -D for unmerged branches, --foreground to block
+/opt/homebrew/bin/wt remove "$BRANCH" -f -D -y --foreground -C "$CWD" 2>&1 || true

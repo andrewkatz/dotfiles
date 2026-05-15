@@ -7,7 +7,7 @@ if [[ -z "$conference_url" || "$conference_url" == "null" ]]; then
   notify-send "No conference link found" "Please check your calendar for details." 
 else
   if command -v xdg-open &>/dev/null; then
-    chromium "$conference_url" &>/dev/null
+    xdg-open "$conference_url" &>/dev/null
   else
     # fallback for macOS, use open command
     open "$conference_url" &>/dev/null
