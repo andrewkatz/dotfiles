@@ -1,0 +1,86 @@
+# Carbonfox theme for btop -- matches the carbonfox palette used elsewhere
+# (ghostty themes/carbonfox, nvim plugins/colors.lua).
+
+# Main background
+theme[main_bg]="#161616"
+
+# Main text color
+theme[main_fg]="#f2f4f8"
+
+# Title color for boxes
+theme[title]="#f2f4f8"
+
+# Highlight color for keyboard shortcuts
+theme[hi_fg]="#82a8f8"
+
+# Background color of selected item in processes box
+theme[selected_bg]="#2a2a2a"
+
+# Foreground color of selected item in processes box
+theme[selected_fg]="#82a8f8"
+
+# Color of inactive/disabled text
+theme[inactive_fg]="#6f6f6f"
+
+# Color of text appearing on top of graphs
+theme[graph_text]="#dfdfe0"
+
+# Background color of the percentage meters
+theme[meter_bg]="#2a2a2a"
+
+# Misc colors for processes box
+theme[proc_misc]="#56bab9"
+
+# CPU, Memory, Network, Proc box outline colors
+theme[cpu_box]="#b897f8"  # magenta
+theme[mem_box]="#5cbb72"  # green
+theme[net_box]="#dc5e95"  # red
+theme[proc_box]="#82a8f8" # blue
+
+# Box divider line
+theme[div_line]="#484848"
+
+# Temperature graph color (Green -> Teal -> Red)
+theme[temp_start]="#5cbb72"
+theme[temp_mid]="#56bab9"
+theme[temp_end]="#dc5e95"
+
+# CPU graph colors (Teal -> Blue -> Magenta)
+theme[cpu_start]="#56bab9"
+theme[cpu_mid]="#82a8f8"
+theme[cpu_end]="#b897f8"
+
+# Mem/Disk free meter (Magenta -> Blue)
+theme[free_start]="#b897f8"
+theme[free_mid]="#95b5f9"
+theme[free_end]="#82a8f8"
+
+# Mem/Disk cached meter (Cyan -> Magenta)
+theme[cached_start]="#5baff8"
+theme[cached_mid]="#82a8f8"
+theme[cached_end]="#b897f8"
+
+# Mem/Disk available meter (Red gradient)
+theme[available_start]="#e175a4"
+theme[available_mid]="#dc5e95"
+theme[available_end]="#dc5e95"
+
+# Mem/Disk used meter (Green -> Teal -> Cyan)
+theme[used_start]="#5cbb72"
+theme[used_mid]="#56bab9"
+theme[used_end]="#5baff8"
+
+# Download graph colors (Red)
+theme[download_start]="#dc5e95"
+theme[download_mid]="#dc5e95"
+theme[download_end]="#e175a4"
+
+# Upload graph colors (Green -> Cyan)
+theme[upload_start]="#5cbb72"
+theme[upload_mid]="#56bab9"
+theme[upload_end]="#5baff8"
+
+# Process box gradient (Cyan -> Blue -> Magenta)
+theme[process_start]="#5baff8"
+theme[process_mid]="#82a8f8"
+theme[process_end]="#b897f8"

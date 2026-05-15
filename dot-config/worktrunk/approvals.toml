@@ -1,3 +1,8 @@
+[projects."github.com/getcomfortly/developerly"]
+approved-commands = [
+    "mise trust",
+]
+
 [projects."github.com/getcomfortly/inn_management"]
 approved-commands = [
     """

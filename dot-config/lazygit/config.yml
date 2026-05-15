@@ -1,0 +1,44 @@
+git:
+  pagers:
+    - colorArg: always
+      pager: diff-so-fancy
+gui:
+  nerdFontsVersion: "3"
+  theme:
+    activeBorderColor:
+      - '#5cbb72'
+      - bold
+    inactiveBorderColor:
+      - '#6f6f6f'
+    optionsTextColor:
+      - '#82a8f8'
+    selectedLineBgColor:
+      - '#2a2a2a'
+    cherryPickedCommitBgColor:
+      - '#484848'
+    cherryPickedCommitFgColor:
+      - '#5cbb72'
+    unstagedChangesColor:
+      - '#dc5e95'
+    defaultFgColor:
+      - '#f2f4f8'
+    searchingActiveBorderColor:
+      - '#56bab9'
+  authorColors:
+    '*': '#b897f8'
+customCommands:
+  - key: "<c-d>"
+    command: "bundle exec kamal deploy"
+    context: "global"
+    loadingText: "Deploying with Kamal..."
+    output: log
+  - key: "<c-n>"
+    command: "git push --no-verify"
+    context: "global"
+    description: "Push (no verify)"
+  - key: "<c-c>"
+    command: "bin/ci"
+    context: "global"
+    description: "Run CI"
+    loadingText: "Running CI..."
+    output: log
