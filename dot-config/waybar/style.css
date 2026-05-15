@@ -1,7 +1,7 @@
 * {
     border: none;
     border-radius: 0;
-    font-family: "CaskaydiaCove Nerd Font", "Caskaydia Cove NF", "Cascadia Code", monospace;
+    font-family: "JetBrainsMono Nerd Font", "JetBrainsMonoNL Nerd Font", "Cascadia Code", monospace;
     font-weight: normal;
     font-size: 14px;
     min-height: 0;
@@ -9,14 +9,14 @@
 
 window#waybar {
     background: transparent;
-    color: #cdd6f4;
+    color: #f2f4f8;
 }
 
 tooltip {
-    background: #313244;
-    border: 1px solid #45475a;
+    background: #2a2a2a;
+    border: 1px solid #353535;
     border-radius: 10px;
-    color: #cdd6f4;
+    color: #f2f4f8;
 }
 
 #workspaces,
@@ -27,18 +27,18 @@ tooltip {
 #custom-project_time,
 #clock {
     background: rgba(49, 50, 68, 0.6);
-    color: #cdd6f4;
+    color: #f2f4f8;
     padding: 4px 12px;
     margin: 4px 2px;
     border-radius: 10px;
-    border: 1px solid #45475a;
+    border: 1px solid #353535;
 }
 
 /* Right group (bluetooth, power profiles) */
 #icons {
   background: rgba(49, 50, 68, 0.6);
-  border: 1px solid #45475a;
-  color: #cdd6f4;
+  border: 1px solid #353535;
+  color: #f2f4f8;
   border-radius: 10px;
   margin: 4px 2px;
   padding: 0;
@@ -100,134 +100,134 @@ tooltip {
     padding-right: 12px;
     margin: 0;
     background: transparent;
-    color: #7f849c;
+    color: #7b7c7e;
     border: none;
     border-radius: 10px;
 }
 
 #workspaces button:hover {
-    background: #45475a;
-    color: #cdd6f4;
+    background: #353535;
+    color: #f2f4f8;
     box-shadow: none;
 }
 
 #workspaces button.active {
-    background: #89b4fa;
-    color: #1e1e2e;
+    background: #82a8f8;
+    color: #161616;
 }
 
 #workspaces button.focused {
-    background: #b4befe;
-    color: #1e1e2e;
+    background: #b897f8;
+    color: #161616;
 }
 
 #workspaces button.urgent {
-    background: #f38ba8;
-    color: #1e1e2e;
+    background: #dc5e95;
+    color: #161616;
 }
 
 /* Individual module styling */
 #idle_inhibitor {
-    color: #f9e2af;
+    color: #56bab9;
 }
 
 #idle_inhibitor.activated {
-    color: #a6e3a1;
+    color: #5cbb72;
 }
 
 #custom-calendar {
-    color: #fab387;
+    color: #56bab9;
 }
 
 #custom-focus {
-    color: #cba6f7;
+    color: #b897f8;
 }
 
 #bluetooth {
-    color: #89b4fa;
+    color: #82a8f8;
 }
 
 #bluetooth.disabled {
-    color: #7f849c;
+    color: #7b7c7e;
 }
 
 #bluetooth.connected {
-    color: #a6e3a1;
+    color: #5cbb72;
 }
 
 #pulseaudio {
-    color: #f5c2e7;
+    color: #ff7eb6;
     padding-right: 15px;
 }
 
 #pulseaudio.muted {
-    color: #7f849c;
+    color: #7b7c7e;
 }
 
 #pulseaudio.bluetooth {
-    color: #89b4fa;
+    color: #82a8f8;
 }
 
 #network {
-    color: #74c7ec;
+    color: #82a8f8;
 }
 
 #network.disconnected {
-    color: #f38ba8;
-    background: #313244;
+    color: #dc5e95;
+    background: #2a2a2a;
 }
 
 #network.linked {
-    color: #f9e2af;
+    color: #56bab9;
 }
 
 #power-profiles-daemon {
-    color: #a6e3a1;
+    color: #5cbb72;
 }
 
 #power-profiles-daemon.performance {
-    color: #f38ba8;
+    color: #dc5e95;
 }
 
 #power-profiles-daemon.balanced {
-    color: #f9e2af;
+    color: #56bab9;
 }
 
 #power-profiles-daemon.power-saver {
-    color: #a6e3a1;
+    color: #5cbb72;
 }
 
 #battery {
-    color: #a6e3a1;
+    color: #5cbb72;
 }
 
 #battery.charging {
-    color: #f9e2af;
+    color: #56bab9;
 }
 
 #battery.warning:not(.charging) {
-    color: #fab387;
+    color: #56bab9;
     animation: blink 0.5s linear infinite alternate;
 }
 
 #battery.critical:not(.charging) {
-    color: #f38ba8;
+    color: #dc5e95;
     animation: blink 0.5s linear infinite alternate;
 }
 
 #battery.good {
-    color: #a6e3a1;
+    color: #5cbb72;
 }
 
 #clock {
-    color: #b4befe;
+    color: #b897f8;
 }
 
 /* Animations */
 @keyframes blink {
     to {
-        background-color: #585b70;
-        color: #cdd6f4;
+        background-color: #535353;
+        color: #f2f4f8;
     }
 }
 
@@ -245,7 +245,7 @@ tooltip {
 #battery:hover,
 #custom-voxtype:hover,
 #clock:hover {
-  background: #45475a;
+  background: #353535;
   transition: all 0.3s ease;
 }
 

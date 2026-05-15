@@ -41,12 +41,12 @@ zinit cdreplay -q
 # Source function files AFTER compinit so compdef calls inside them work.
 for f in ~/.zsh/functions/*.zsh(N); do source "$f"; done
 
-# fzf + catppuccin theme
+# fzf + carbonfox theme
 export FZF_DEFAULT_OPTS=" \
---color=bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8 \
---color=fg:#cdd6f4,header:#f38ba8,info:#cba6f7,pointer:#f5e0dc \
---color=marker:#b4befe,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8 \
---color=selected-bg:#45475a \
+--color=bg+:#2a2a2a,bg:#161616,spinner:#dfdfe0,hl:#dc5e95 \
+--color=fg:#f2f4f8,header:#dc5e95,info:#b897f8,pointer:#dfdfe0 \
+--color=marker:#b897f8,fg+:#f2f4f8,prompt:#b897f8,hl+:#dc5e95 \
+--color=selected-bg:#353535 \
 --multi"
 source <(fzf --zsh)
 bindkey -r '^R'

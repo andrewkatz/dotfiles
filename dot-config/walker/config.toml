@@ -1,6 +1,6 @@
 force_keyboard_focus = true                                                 # forces keyboard forcus to stay in Walker
 selection_wrap = true                                                       # wrap list if at bottom or top
-theme = "catppuccin-mocha"                                                  # theme to use
+theme = "carbonfox"                                                  # theme to use
 additional_theme_location = "~/.config/walker/themes"
 
 [placeholders]

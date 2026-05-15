@@ -16,11 +16,11 @@ function wcc-popup() {
     --placeholder "initial prompt for claude (ctrl-d to finish, empty to skip)" \
     --header "prompt:  enter submit · ctrl+j new line · ctrl+e editor" \
     --no-show-help \
-    --header.foreground "#cba6f7" --header.bold \
-    --cursor.foreground "#cba6f7" \
-    --placeholder.foreground "#bac2de" \
-    --base.foreground "#f5e0dc" \
-    --end-of-buffer.foreground "#585b70" \
+    --header.foreground "#b897f8" --header.bold \
+    --cursor.foreground "#b897f8" \
+    --placeholder.foreground "#dfdfe0" \
+    --base.foreground "#dfdfe0" \
+    --end-of-buffer.foreground "#535353" \
     --width 80 --height 10) || return 1
 
   if [[ -n "$prompt" ]] && command -v ollama >/dev/null 2>&1; then
@@ -34,7 +34,7 @@ Reply with ONLY the branch name."
     local suggest_file
     suggest_file=$(mktemp "${TMPDIR:-/tmp}/wcc-suggest.XXXXXX")
     OLLAMA_META_PROMPT="$meta_prompt" gum spin --spinner dot --title "suggesting branch name..." \
-      --spinner.foreground "#cba6f7" --title.foreground "#f5e0dc" --title.bold -- \
+      --spinner.foreground "#b897f8" --title.foreground "#dfdfe0" --title.bold -- \
       sh -c "ollama run '$ollama_model' \"\$OLLAMA_META_PROMPT\" > '$suggest_file' 2>/dev/null"
     suggestion=$(awk 'NF' "$suggest_file" | tail -n 1 \
       | tr -d '\r"'"'" \
@@ -49,16 +49,16 @@ Reply with ONLY the branch name."
   branch=$(gum input \
     --placeholder "branch name (e.g. fix-auth-bug)" \
     --prompt "branch: " \
-    --prompt.foreground "#cba6f7" --prompt.bold \
-    --cursor.foreground "#cba6f7" \
-    --placeholder.foreground "#bac2de" \
+    --prompt.foreground "#b897f8" --prompt.bold \
+    --cursor.foreground "#b897f8" \
+    --placeholder.foreground "#dfdfe0" \
     --value "$suggestion") || return 1
   [[ -z "$branch" ]] && { echo "aborted: no branch"; return 1; }
 
   if gum confirm "enable --plan mode?" --default=no \
-    --prompt.foreground "#f5e0dc" --prompt.bold \
-    --selected.foreground "#1e1e2e" --selected.background "#cba6f7" --selected.bold \
-    --unselected.foreground "#bac2de"; then
+    --prompt.foreground "#dfdfe0" --prompt.bold \
+    --selected.foreground "#161616" --selected.background "#b897f8" --selected.bold \
+    --unselected.foreground "#dfdfe0"; then
     plan_flag="--plan"
   fi
 
