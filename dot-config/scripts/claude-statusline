@@ -2,7 +2,6 @@
 
 data=$(cat)
 pct=$(echo "$data" | jq -r '.context_window.used_percentage // 0 | round')
-cost=$(printf '%.2f' "$(echo "$data" | jq -r '.cost.total_cost_usd // 0')")
 
 # Progress bar settings
 bar_width=20
@@ -27,6 +26,4 @@ bar+="${dim}"
 for ((i = 0; i < empty; i++)); do bar+="░"; done
 bar+="${reset}"
 
-sep="${dim}│${reset}"
-
-printf "%s" " ${bar} ${pct}% ${sep} \$${cost}"
+printf "%s" " ${bar} ${pct}%"
