@@ -47,7 +47,7 @@
       {
         "hooks": [
           {
-            "command": "[ -n \"$SUPERSET_HOME_DIR\" ] \u0026\u0026 [ -x \"$SUPERSET_HOME_DIR/hooks/notify.sh\" ] \u0026\u0026 SUPERSET_AGENT_ID=claude \"$SUPERSET_HOME_DIR/hooks/notify.sh\" || true",
+            "command": "[ -n \"$SUPERSET_HOME_DIR\" ] && [ -x \"$SUPERSET_HOME_DIR/hooks/notify.sh\" ] && SUPERSET_AGENT_ID=claude \"$SUPERSET_HOME_DIR/hooks/notify.sh\" || true",
             "type": "command"
           }
         ],
@@ -75,7 +75,7 @@
       {
         "hooks": [
           {
-            "command": "[ -n \"$SUPERSET_HOME_DIR\" ] \u0026\u0026 [ -x \"$SUPERSET_HOME_DIR/hooks/notify.sh\" ] \u0026\u0026 SUPERSET_AGENT_ID=claude \"$SUPERSET_HOME_DIR/hooks/notify.sh\" || true",
+            "command": "[ -n \"$SUPERSET_HOME_DIR\" ] && [ -x \"$SUPERSET_HOME_DIR/hooks/notify.sh\" ] && SUPERSET_AGENT_ID=claude \"$SUPERSET_HOME_DIR/hooks/notify.sh\" || true",
             "type": "command"
           }
         ],
@@ -95,7 +95,7 @@
       {
         "hooks": [
           {
-            "command": "[ -n \"$SUPERSET_HOME_DIR\" ] \u0026\u0026 [ -x \"$SUPERSET_HOME_DIR/hooks/notify.sh\" ] \u0026\u0026 SUPERSET_AGENT_ID=claude \"$SUPERSET_HOME_DIR/hooks/notify.sh\" || true",
+            "command": "[ -n \"$SUPERSET_HOME_DIR\" ] && [ -x \"$SUPERSET_HOME_DIR/hooks/notify.sh\" ] && SUPERSET_AGENT_ID=claude \"$SUPERSET_HOME_DIR/hooks/notify.sh\" || true",
             "type": "command"
           }
         ],
@@ -142,7 +142,7 @@
       {
         "hooks": [
           {
-            "command": "[ -n \"$SUPERSET_HOME_DIR\" ] \u0026\u0026 [ -x \"$SUPERSET_HOME_DIR/hooks/notify.sh\" ] \u0026\u0026 SUPERSET_AGENT_ID=claude \"$SUPERSET_HOME_DIR/hooks/notify.sh\" || true",
+            "command": "[ -n \"$SUPERSET_HOME_DIR\" ] && [ -x \"$SUPERSET_HOME_DIR/hooks/notify.sh\" ] && SUPERSET_AGENT_ID=claude \"$SUPERSET_HOME_DIR/hooks/notify.sh\" || true",
             "type": "command"
           }
         ]
@@ -168,7 +168,7 @@
       {
         "hooks": [
           {
-            "command": "[ -n \"$SUPERSET_HOME_DIR\" ] \u0026\u0026 [ -x \"$SUPERSET_HOME_DIR/hooks/notify.sh\" ] \u0026\u0026 SUPERSET_AGENT_ID=claude \"$SUPERSET_HOME_DIR/hooks/notify.sh\" || true",
+            "command": "[ -n \"$SUPERSET_HOME_DIR\" ] && [ -x \"$SUPERSET_HOME_DIR/hooks/notify.sh\" ] && SUPERSET_AGENT_ID=claude \"$SUPERSET_HOME_DIR/hooks/notify.sh\" || true",
             "type": "command"
           }
         ]
@@ -186,7 +186,7 @@
       {
         "hooks": [
           {
-            "command": "[ -n \"$SUPERSET_HOME_DIR\" ] \u0026\u0026 [ -x \"$SUPERSET_HOME_DIR/hooks/notify.sh\" ] \u0026\u0026 SUPERSET_AGENT_ID=claude \"$SUPERSET_HOME_DIR/hooks/notify.sh\" || true",
+            "command": "[ -n \"$SUPERSET_HOME_DIR\" ] && [ -x \"$SUPERSET_HOME_DIR/hooks/notify.sh\" ] && SUPERSET_AGENT_ID=claude \"$SUPERSET_HOME_DIR/hooks/notify.sh\" || true",
             "type": "command"
           }
         ]
@@ -212,7 +212,7 @@
       {
         "hooks": [
           {
-            "command": "[ -n \"$SUPERSET_HOME_DIR\" ] \u0026\u0026 [ -x \"$SUPERSET_HOME_DIR/hooks/notify.sh\" ] \u0026\u0026 SUPERSET_AGENT_ID=claude \"$SUPERSET_HOME_DIR/hooks/notify.sh\" || true",
+            "command": "[ -n \"$SUPERSET_HOME_DIR\" ] && [ -x \"$SUPERSET_HOME_DIR/hooks/notify.sh\" ] && SUPERSET_AGENT_ID=claude \"$SUPERSET_HOME_DIR/hooks/notify.sh\" || true",
             "type": "command"
           }
         ]
@@ -225,11 +225,42 @@
           }
         ]
       }
+    ],
+    "WorktreeCreate": [
+      {
+        "hooks": [
+          {
+            "command": "~/.config/scripts/claude-worktree-create",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "WorktreeRemove": [
+      {
+        "hooks": [
+          {
+            "command": "~/.config/scripts/claude-worktree-remove",
+            "type": "command"
+          }
+        ]
+      }
     ]
   },
   "permissions": {
     "defaultMode": "plan",
-    "disableAutoMode": "disable"
+    "disableAutoMode": "disable",
+    "additionalDirectories": [
+      "~/.local/share/mise",
+      "~/.cache"
+    ]
   },
-  "skipDangerousModePermissionPrompt": true
+  "skipDangerousModePermissionPrompt": true,
+  "model": "opus",
+  "tui": "fullscreen",
+  "agentPushNotifEnabled": true,
+  "statusLine": {
+    "command": "~/.config/scripts/claude-statusline",
+    "type": "command"
+  }
 }

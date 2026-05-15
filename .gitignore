@@ -15,10 +15,11 @@ dot-claude/*
 !dot-claude/hooks
 !dot-claude/hooks/*
 
-# dot-pi: only track these (no caches/auth)
+# dot-pi: only track these (no caches/auth/sessions)
 dot-pi/*
 !dot-pi/agent
 dot-pi/agent/*
+!dot-pi/agent/.gitignore
 !dot-pi/agent/extensions
 !dot-pi/agent/keybindings.json
 !dot-pi/agent/prompts
@@ -26,4 +27,5 @@ dot-pi/agent/*
 dot-pi/agent/extensions/*
 !dot-pi/agent/extensions/*.ts
 !dot-pi/agent/extensions/*.json
-!dot-pi/agent/extensions/.gitignore
+dot-pi/agent/prompts/*
+!dot-pi/agent/prompts/*.md
