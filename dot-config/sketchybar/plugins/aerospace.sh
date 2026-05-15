@@ -3,7 +3,12 @@
 FOCUSED_WORKSPACE=${FOCUSED_WORKSPACE:-$(aerospace list-workspaces --focused)}
 
 windows=$(aerospace list-windows --all --format "%{workspace},%{window-id}")
-mapfile -t sids < <(sketchybar --query aerospace | jq -r '.bracket[]')
+# Read bracket items into array. macOS /bin/bash is 3.2 which lacks `mapfile`,
+# and sketchybar's launchd PATH may resolve `env bash` to the system one.
+sids=()
+while IFS= read -r line; do
+  sids+=("$line")
+done < <(sketchybar --query aerospace | jq -r '.bracket[]')
 
 commands=()
 for sid in "${sids[@]}"; do
