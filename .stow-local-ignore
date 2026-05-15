@@ -7,7 +7,9 @@ Archfile
 Archfile.lock
 ^/.config/tmux/plugins
 .machine_name
-.gitignore
+^/\.git
+^/\.gitignore
+^/\.stow-local-ignore
 .claude
 dot-zsh/compcache
 hooks

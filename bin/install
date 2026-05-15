@@ -78,7 +78,7 @@ install_platform_overlay() {
   fi
   if [ -n "$platform" ] && [ -d "$platform" ]; then
     log "Installing $platform overlay..."
-    (cd "$platform" && stow --verbose=2 --dotfiles --adopt -t "$HOME" .)
+    (cd "$platform" && stow --verbose=2 --dotfiles -t "$HOME" .)
   fi
 }
 
@@ -88,6 +88,6 @@ change_shell_to_zsh
 init_tpm
 
 log "Installing dotfiles using stow..."
-stow --verbose=2 --dotfiles --adopt -t $HOME .
+stow --verbose=2 --dotfiles -t $HOME .
 install_platform_overlay
 clean_broken_symlinks
