@@ -1,0 +1,10 @@
+[Trigger]
+Operation = Upgrade
+Type = Package
+Target = elephant
+Target = elephant-*
+
+[Action]
+Description = Restarting elephant after upgrade...
+When = PostTransaction
+Exec = /usr/bin/pkill -x elephant

@@ -1,160 +1,179 @@
 {
-  "reload_style_on_change": true,
-  "layer": "top",
-  "position": "top",
-  "spacing": 0,
-  "height": 26,
-  "modules-left": ["hyprland/workspaces", "custom/calendar"],
-  "modules-center": ["custom/update", "custom/screenrecording-indicator"],
-  "modules-right": [
-    "mpris",
-    "group/tray-expander",
-    "network",
-    "pulseaudio",
-    "battery",
-    "clock"
-  ],
-  "hyprland/workspaces": {
-    "on-click": "activate",
-    "format": "{icon}",
-    "format-icons": {
-      "default": "",
-      "1": "1",
-      "2": "2",
-      "3": "3",
-      "4": "4",
-      "5": "5",
-      "6": "6",
-      "7": "7",
-      "8": "8",
-      "9": "9",
-      "active": "󱓻"
+    "height": 35, // Waybar height (to be removed for auto height)
+    "spacing": 4, // Gaps between modules (4px)
+    // Choose the order of the modules
+    "modules-left": [
+      "hyprland/workspaces",
+      "custom/calendar"
+    ],
+    "modules-center": [
+      "custom/focus"
+    ],
+    "modules-right": [
+      "group/icons",
+      "pulseaudio",
+      "custom/project_time",
+      "clock"
+    ],
+    "group/icons": {
+      "orientation": "inherit",
+      "modules": [
+        "custom/tailscale",
+        "idle_inhibitor",
+        "bluetooth",
+        "power-profiles-daemon",
+        "network",
+        "custom/voxtype",
+        "battery"
+      ]
     },
-    "persistent-workspaces": {
-      "1": [],
-      "2": [],
-      "3": [],
-      "4": [],
-      "5": [],
-      "6": []
-    }
-  },
-  "custom/calendar": {
-    "exec": "~/.config/waybar/scripts/calendar.sh",
-    "return-type": "json",
-    "interval": 300, // Update every 5 minutes
-    "format": "  {}",
-    "on-click": "~/.config/scripts/open_calendar_event.sh"
-  },
-  "custom/omarchy": {
-    "format": "<span font='omarchy'>\ue900</span>",
-    "on-click": "omarchy-menu",
-    "on-click-right": "omarchy-launch-terminal",
-    "tooltip-format": "Omarchy Menu\n\nSuper + Alt + Space"
-  },
-  "custom/update": {
-    "format": "",
-    "exec": "omarchy-update-available",
-    "on-click": "omarchy-launch-floating-terminal-with-presentation omarchy-update",
-    "tooltip-format": "Omarchy update available",
-    "signal": 7,
-    "interval": 3600
-  },
-  "mpris": {
-    "format": "{player_icon}  {artist} - {title}",
-    "format-paused": "⏸ {player_icon}  {artist} - {title}",
-    "player-icons": {
-      "spotify": "",
-      "default": ""
+    // Modules configuration
+    "hyprland/workspaces": {
+        "disable-scroll": true,
+        "all-outputs": true,
+        "warp-on-scroll": false,
+        "format": "{name}: {icon}",
+        "format-icons": {
+          "1": "",
+          "2": "",
+          "3": "",
+          "4": "",
+          "5": "",
+          "6": "󰄛",
+          "active": "",
+            "default": ""
+        }
     },
-    "ignored-players": [],
-    "player-state": "playing"
-  },
-  "cpu": {
-    "interval": 5,
-    "format": "󰍛",
-    "on-click": "$TERMINAL -e btop"
-  },
-  "clock": {
-    "format": "{:%m-%d %I:%M %p}",
-    "tooltip-format": "<big>{:%Y %B}</big>\n<tt>{calendar}</tt>",
-    "calendar": {
-      "format": {
-        "months": "",
-        "today": "<b>{}</b>"
+    "custom/voxtype": {
+      "exec": "voxtype status --follow --format json",
+      "return-type": "json",
+      "format": "{}",
+      "tooltip": true,
+      "on-click": "systemctl --user restart voxtype"
+    },
+    "custom/tailscale": {
+        "exec": "~/.config/waybar/scripts/tailscale.sh",
+        "return-type": "json",
+        "interval": 60, // Update every minute
+        "format": " ",
+        "tooltip-format": "{}",
+        "on-click": "ghostty -e ~/.config/scripts/tailscale-switch"
+    },
+    "custom/project_time": {
+        "exec": "~/.config/waybar/scripts/project_time.sh",
+        "return-type": "json",
+        "interval": 300, // Update every 5 minutes
+        "format": "󰃰  {}"
+    },
+    "custom/calendar": {
+        "exec": "~/.config/waybar/scripts/calendar.sh",
+        "return-type": "json",
+        "interval": 300, // Update every 5 minutes
+        "format": "  {}",
+        "on-click": "~/.config/scripts/open_calendar_event.sh"
+    },
+    "custom/focus": {
+        "exec": "~/.config/waybar/scripts/focus.sh",
+        "return-type": "json",
+        "interval": 60, // Update every minute
+        "format": "󰄬  {}"
+    },
+    "custom/docker": {
+        "exec": "~/.config/waybar/scripts/docker.sh",
+        "return-type": "json",
+        "interval": 60, // Update every minute
+        "format": "{icon}",
+        "format-icons": {
+            "running": "󰆦",
+            "stopped": "󰆧"
+        },
+        "on-click": "ghostty -e lazydocker"
+    },
+    "idle_inhibitor": {
+        "format": "{icon}",
+        "format-icons": {
+            "activated": "󰅶",
+            "deactivated": "󰛊"
+        }
+    },
+    "custom/weather": {
+        "exec": "~/.config/waybar/scripts/weather.sh",
+        "return-type": "json",
+        "interval": 600, // Update every 10 minutes
+        "on-click": "ghostty -e 'curl -s https://wttr.in/; read'"
+    },
+    "clock": {
+        "format": "{:%m-%d %I:%M %p}",
+        "tooltip-format": "<big>{:%Y %B}</big>\n<tt>{calendar}</tt>",
+        "calendar": {
+          "format": {
+            "months": "",
+            "today": "<b>{}</b>"
+          }
+        }
+    },
+    "battery": {
+        "states": {
+            "warning": 30,
+            "critical": 15
+        },
+        "format": "{icon} {power:>1.0f}W",
+        "format-full": "{icon} {power:>1.0f}W",
+        "format-charging": "󰂄 {power:>1.0f}W",
+        "format-plugged": " {power:>1.0f}W",
+        "tooltip-format-discharging": "{power:>1.0f}W↓ {capacity}%\n{time} remaining",
+        "tooltip-format-charging": "{power:>1.0f}W↑ {capacity}%\n{time} to full",
+        "format-icons": ["", "", "", "", ""]
+    },
+    "power-profiles-daemon": {
+      "format": "{icon}",
+      "tooltip-format": "Power profile: {profile}\nDriver: {driver}",
+      "tooltip": true,
+      "format-icons": {
+        "default": "",
+        "performance": "",
+        "balanced": "",
+        "power-saver": ""
       }
-    }
-  },
-  "network": {
-    "format-icons": ["󰤯", "󰤟", "󰤢", "󰤥", "󰤨"],
-    "format": "{icon}",
-    "format-wifi": "{icon}",
-    "format-ethernet": "󰀂",
-    "format-disconnected": "󰤮",
-    "tooltip-format-wifi": "{essid} ({frequency} GHz)\n⇣{bandwidthDownBytes}  ⇡{bandwidthUpBytes}",
-    "tooltip-format-ethernet": "⇣{bandwidthDownBytes}  ⇡{bandwidthUpBytes}",
-    "tooltip-format-disconnected": "Disconnected",
-    "interval": 3,
-    "spacing": 1,
-    "on-click": "omarchy-launch-wifi"
-  },
-  "battery": {
-    "format": "{capacity}% {icon}",
-    "format-discharging": "{icon}",
-    "format-charging": "{icon}",
-    "format-plugged": "",
-    "format-icons": {
-      "charging": ["󰢜", "󰂆", "󰂇", "󰂈", "󰢝", "󰂉", "󰢞", "󰂊", "󰂋", "󰂅"],
-      "default": ["󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"]
     },
-    "format-full": "󰂅",
-    "tooltip-format-discharging": "{power:>1.0f}W↓ {capacity}%",
-    "tooltip-format-charging": "{power:>1.0f}W↑ {capacity}%",
-    "interval": 5,
-    "on-click": "omarchy-menu power",
-    "states": {
-      "warning": 20,
-      "critical": 10
-    }
-  },
-  "bluetooth": {
-    "format": "",
-    "format-disabled": "󰂲",
-    "format-connected": "",
-    "tooltip-format": "Devices connected: {num_connections}",
-    "on-click": "blueberry"
-  },
-  "pulseaudio": {
-    "format": "{icon}",
-    "on-click": "$TERMINAL --class=Wiremix -e wiremix",
-    "on-click-right": "pamixer -t",
-    "tooltip-format": "Playing at {volume}%",
-    "scroll-step": 5,
-    "format-muted": "",
-    "format-icons": {
-      "default": ["", "", ""]
-    }
-  },
-  "group/tray-expander": {
-    "orientation": "inherit",
-    "drawer": {
-      "transition-duration": 600,
-      "children-class": "tray-group-item"
+    "network": {
+      "format-icons": ["󰤯","󰤟","󰤢","󰤥","󰤨"],
+      "format" : "{icon}",
+      "format-wifi" : "{icon}",
+      "format-ethernet" : "󰀂",
+      "format-disconnected" : "󰖪",
+      "tooltip-format-wifi": "{essid} ({frequency} GHz)\n⇣{bandwidthDownBytes}  ⇡{bandwidthUpBytes}",
+      "tooltip-format-ethernet": "⇣{bandwidthDownBytes}  ⇡{bandwidthUpBytes}",
+      "tooltip-format-disconnected": "Disconnected",
+      "interval": 3,
+      "nospacing": 1,
+      "on-click": "ghostty -e impala"
     },
-    "modules": ["custom/expand-icon", "tray"]
-  },
-  "custom/expand-icon": {
-    "format": " ",
-    "tooltip": false
-  },
-  "custom/screenrecording-indicator": {
-    "on-click": "omarchy-cmd-screenrecord",
-    "exec": "$OMARCHY_PATH/default/waybar/indicators/screen-recording.sh",
-    "signal": 8,
-    "return-type": "json"
-  },
-  "tray": {
-    "icon-size": 12,
-    "spacing": 12
-  }
+    "pulseaudio": {
+        // "scroll-step": 1, // %, can be a float
+        "format": "{volume}% {icon}",
+        "format-bluetooth": "{volume}% {icon} ",
+        "format-bluetooth-muted": " {icon} ",
+        "format-muted": "",
+        "format-source-muted": "",
+        "format-icons": {
+            "headphone": "",
+            "hands-free": "",
+            "headset": "󰋎",
+            "phone": "",
+            "portable": "",
+            "car": "",
+            "default": ["", "", ""]
+        },
+        "on-click": "pavucontrol"
+    },
+    "bluetooth": {
+      "format": "",
+      "format-disabled": "", // an empty format will hide the module
+      "format-connected": "",
+      "tooltip-format": "{controller_alias}\t{controller_address}",
+      "tooltip-format-connected": "{controller_alias}\t{controller_address}\n\n{device_enumerate}",
+      "tooltip-format-enumerate-connected": "{device_alias}\t{device_address}",
+      "on-click": "ghostty -e bluetuith"
+    }
 }

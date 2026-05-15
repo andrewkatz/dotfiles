@@ -82,6 +82,26 @@ install_platform_overlay() {
   fi
 }
 
+archfile_packages() {
+  # Print all uncommented, non-empty lines from Archfile, space-separated.
+  grep -v '^[[:space:]]*#' Archfile | grep -v '^[[:space:]]*$' | tr '\n' ' '
+}
+
+install_packages() {
+  if [ "$(uname)" = "Darwin" ]; then
+    if [ -f Brewfile ]; then
+      log "Installing Brewfile packages..."
+      brew bundle --file=Brewfile
+    fi
+  elif [ "$(uname)" = "Linux" ]; then
+    if [ -f Archfile ]; then
+      log "Installing Archfile packages..."
+      # shellcheck disable=SC2046
+      yay -S --needed --noconfirm $(archfile_packages)
+    fi
+  fi
+}
+
 install_package_manager
 install_stow
 change_shell_to_zsh
@@ -90,4 +110,5 @@ init_tpm
 log "Installing dotfiles using stow..."
 stow --verbose=2 --dotfiles -t $HOME .
 install_platform_overlay
+install_packages
 clean_broken_symlinks

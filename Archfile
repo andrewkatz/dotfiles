@@ -1,0 +1,135 @@
+# Hyprland + Wayland
+hypridle
+hyprland
+hyprlock
+hyprpaper
+hyprshot
+uwsm
+waybar
+walker
+mako
+wl-clipboard
+wtype
+xdg-desktop-portal-hyprland
+
+# Walker (elephant) data providers
+elephant
+elephant-bluetooth
+elephant-calc
+elephant-clipboard
+elephant-desktopapplications
+elephant-files
+elephant-menus
+elephant-providerlist
+elephant-runner
+elephant-symbols
+elephant-todo
+elephant-unicode
+elephant-websearch
+
+# Audio
+pipewire
+wireplumber
+
+# Bluetooth
+bluez
+bluez-utils
+
+# Security / auth
+gnome-keyring
+polkit-gnome
+libsecret
+seahorse
+
+# Network / power
+brightnessctl
+playerctl
+power-profiles-daemon
+tailscale
+
+# Fonts
+noto-fonts-emoji
+ttf-jetbrains-mono-nerd
+
+# Shell + CLI essentials
+base-devel
+bat
+btop
+curl
+diff-so-fancy
+direnv
+eza
+fd
+fzf
+git
+git-lfs
+github-cli
+gum
+htop
+imagemagick
+jq
+lazydocker
+lazygit
+less
+man-db
+mise
+mosh
+neovim
+nodejs
+npm
+openssh
+ripgrep
+ruby-build
+sd
+starship
+stow
+tldr
+tmux
+tree-sitter-cli
+unzip
+wget
+worktrunk-bin
+xclip
+yamllint
+yarn
+yazi
+zip
+zoxide
+zsh
+
+# Dev tooling
+docker
+docker-buildx
+docker-compose
+ghostty
+go
+libvips
+ngrok
+openslide
+restic
+rust
+terraform
+
+# Applications
+1password
+1password-cli
+brave-bin
+chromium
+firefox
+obsidian
+slack-desktop-wayland
+zoom
+
+# AI tools
+codename-goose-bin
+ollama
+opencode
+
+# Linux QoL
+bluetuith            # bluetooth TUI
+gpu-screen-recorder
+impala               # wifi TUI
+magic-wormhole       # one-off file transfer
+syncthing            # file sync
+voxtype              # voice-to-text
+xournalpp            # PDF annotation

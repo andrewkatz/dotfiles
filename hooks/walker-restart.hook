@@ -1,0 +1,9 @@
+[Trigger]
+Operation = Upgrade
+Type = Package
+Target = walker
+
+[Action]
+Description = Restarting walker after upgrade...
+When = PostTransaction
+Exec = /usr/bin/pkill -x walker
