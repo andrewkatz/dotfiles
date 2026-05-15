@@ -38,6 +38,9 @@ fi
 unset _zcompdump_stale
 zinit cdreplay -q
 
+# Source function files AFTER compinit so compdef calls inside them work.
+for f in ~/.zsh/functions/*.zsh(N); do source "$f"; done
+
 # fzf + catppuccin theme
 export FZF_DEFAULT_OPTS=" \
 --color=bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8 \

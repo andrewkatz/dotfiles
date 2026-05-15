@@ -162,34 +162,6 @@ ed() {
   tailscale up
 }
 
-# Quick dir jumpers
-d() {
-  cd ~/Work/$1
-}
-compdef "_files -W \"$HOME/Work\"" d
-
-tmp() {
-  cd ~/tmp/$1
-}
-compdef "_files -W \"$HOME/tmp\"" tmp
-
-nvimrc() {
-  previous_dir=$(pwd)
-  cd ~/.config/nvim
-  nvim
-  cd $previous_dir
-}
-
-# small helpers
-pcurl() {
-  curl -s $1 | underscore print --outfmt pretty
-}
-
-convert_wav() {
-  lame -b 320 -h $1.wav $1.mp3
-  rm -rf $1.wav
-}
-
 # AI
 alias crush='crush --yolo'
 alias c="claude --model 'opus' --effort 'xhigh' --dangerously-skip-permissions"
@@ -251,5 +223,5 @@ function web2app-remove() {
   rm "$ICON_PATH"
 }
 
-# Source function files
-for f in ~/.zsh/functions/*.zsh(N); do source "$f"; done
+# Function files are sourced from dot-zshrc after compinit so that
+# compdef calls (used by ~/.zsh/functions/dirs.zsh) work correctly.
