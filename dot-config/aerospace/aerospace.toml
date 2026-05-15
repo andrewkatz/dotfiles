@@ -63,7 +63,7 @@ inner.horizontal = 10
 inner.vertical =   10
 outer.left =       10
 outer.bottom =     10
-outer.top =        [{ monitor.1 = 5 }, 40]  # DEBUG: testing if gap reloads at all
+outer.top =        [{ monitor."built-in" = 12 }, 40]  # built-in: notch already pads ~37px; externals: reserve for sketchybar (height=35)
 outer.right =      10
 
 # 'main' binding mode declaration
