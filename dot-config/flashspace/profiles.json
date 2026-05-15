@@ -1,0 +1,101 @@
+{
+  "profiles" : [
+    {
+      "id" : "F95B7466-FAF7-4ABF-A32F-ADFCE554B04C",
+      "name" : "Default",
+      "workspaces" : [
+        {
+          "apps" : [
+            {
+              "bundleIdentifier" : "com.google.Chrome",
+              "iconPath" : "/Applications/Google Chrome.app/Contents/Resources/app.icns",
+              "name" : "Google Chrome"
+            },
+            {
+              "bundleIdentifier" : "com.brave.Browser",
+              "iconPath" : "/Applications/Brave Browser.app/Contents/Resources/app.icns",
+              "name" : "Brave Browser"
+            }
+          ],
+          "display" : "BenQ RD280U",
+          "id" : "26793B3C-2384-4888-8350-64BF27489411",
+          "name" : "Browser",
+          "openAppsOnActivation" : false,
+          "shortcut" : "opt+1",
+          "symbolIconName" : "globe"
+        },
+        {
+          "apps" : [
+            {
+              "bundleIdentifier" : "com.googlecode.iterm2",
+              "iconPath" : "/Applications/iTerm.app/Contents/Resources/iTerm2 App Icon for Release.icns",
+              "name" : "iTerm2"
+            },
+            {
+              "bundleIdentifier" : "com.mitchellh.ghostty",
+              "iconPath" : "/Applications/Ghostty.app/Contents/Resources/Ghostty.icns",
+              "name" : "Ghostty"
+            }
+          ],
+          "display" : "BenQ RD280U",
+          "id" : "62A8ADA3-8B90-4128-B079-9F3334E97586",
+          "name" : "Terminal",
+          "openAppsOnActivation" : false,
+          "shortcut" : "opt+2",
+          "symbolIconName" : "apple.terminal"
+        },
+        {
+          "apps" : [
+            {
+              "bundleIdentifier" : "com.apple.Music",
+              "iconPath" : "/System/Applications/Music.app/Contents/Resources/AppIcon.icns",
+              "name" : "Music"
+            },
+            {
+              "bundleIdentifier" : "com.spotify.client",
+              "iconPath" : "/Applications/Spotify.app/Contents/Resources/AppIcon.icns",
+              "name" : "Spotify"
+            }
+          ],
+          "display" : "BenQ RD280U",
+          "id" : "B883FDBC-78D9-4C00-A31A-9D3F918A843C",
+          "name" : "Music",
+          "openAppsOnActivation" : false,
+          "shortcut" : "opt+m",
+          "symbolIconName" : "music.note"
+        },
+        {
+          "apps" : [
+            {
+              "bundleIdentifier" : "com.tinyspeck.slackmacgap",
+              "iconPath" : "/Applications/Slack.app/Contents/Resources/electron.icns",
+              "name" : "Slack"
+            },
+            {
+              "bundleIdentifier" : "com.apple.MobileSMS",
+              "iconPath" : "/System/Applications/Messages.app/Contents/Resources/AppIcon.icns",
+              "name" : "Messages"
+            }
+          ],
+          "display" : "BenQ RD280U",
+          "id" : "11BFC8D8-945D-483C-AD99-48934F2E59E8",
+          "name" : "Chat",
+          "openAppsOnActivation" : false,
+          "shortcut" : "opt+3",
+          "symbolIconName" : "message.fill"
+        },
+        {
+          "apps" : [
+
+          ],
+          "display" : "BenQ RD280U",
+          "id" : "7E3145BA-0189-4A0F-BF9F-43B913F85E3E",
+          "name" : "Workspace 4",
+          "openAppsOnActivation" : false,
+          "shortcut" : "opt+4",
+          "symbolIconName" : "4.square.fill"
+        }
+      ]
+    }
+  ]
+}

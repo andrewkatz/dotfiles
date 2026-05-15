@@ -1,9 +1,11 @@
-[core]
-  excludesfile = ~/.gitignore
-  pager = diff-so-fancy | less --tabs=4 -RFX
+[credential]
+  helper = osxkeychain
 [user]
   name = Andrew Katz
-  email = andrew@giantpartners.com
+  email = andrew.katz@hey.com
+[core]
+  excludesfile = ~/.gitignore_global
+  pager = diff-so-fancy | less --tabs=4 -RFX
 [alias]
   ls = log --color --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset' --abbrev-commit
   lg = log --color --graph --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset' --abbrev-commit
@@ -29,14 +31,9 @@
   required = true
   clean = git-lfs clean -- %f
   smudge = git-lfs smudge -- %f
-[mergetool]
-  prompt = false
-  keepBackup = false
 [pull]
   rebase = false
 [init]
   defaultBranch = main
-[include]
-  path = ~/.config/local/gitconfig
 [github]
   user = andrewkatz

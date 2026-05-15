@@ -1,5 +1,6 @@
 alias reload='exec $SHELL -l'
 alias ip='curl http://ipv4.icanhazip.com'
+alias update='~/.bin/update'
 
 # vim
 alias vim='nvim'
@@ -64,6 +65,10 @@ alias ghm='gh pr merge -md --admin ; gp'
 alias rw='gh repo view -w'
 alias prw='gh pr view -w'
 alias prc='gh pr create'
+alias prcf='gh pr create --fill'
+
+# wt (worktrunk)
+alias wtr='wt remove --force -D'
 
 function gbisect() {
   good=$1
@@ -73,6 +78,12 @@ function gbisect() {
   git bisect good $good ;
   git bisect run ~/git-bisect.sh ;
 }
+
+# brew
+alias bs='brew services'
+alias bss='brew services start'
+alias bsr='brew services restart'
+alias bsp='brew services stop'
 
 # lazy
 alias ld='lazydocker'
@@ -97,6 +108,13 @@ alias tp='terraform plan'
 alias dcu='docker-compose up -d'
 alias dcd='docker-compose down'
 
+# misc cli tools
+alias snowsql=/Applications/SnowSQL.app/Contents/MacOS/snowsql
+alias pm='open -a "Pixelmator Pro"'
+
+# web + dev shortcuts
+alias wd='web ; dev'
+
 # tmux
 function tm() {
   if ! tmux has-session 2>/dev/null; then
@@ -116,9 +134,8 @@ function tm() {
 alias ssh_core='ssh -i ~/.ssh/liz/portal-dev-or.pem ubuntu@54.70.173.252'
 alias ssh_lg_api='ssh -i ~/.ssh/liz/portal-dev-or.pem ubuntu@44.232.21.7'
 alias ssh_whitelabel='ssh -i ~/.ssh/liz/portal-dev-or.pem ubuntu@44.232.205.154'
-alias ssh_data_tunnel='ssh andrewkatz@data.giantpartners.com'
+alias ssh_data_tunnel='ssh ubuntu@data.giantpartners.com'
 alias ssh_sftp='ssh -i ~/.ssh/liz/portal-dev-or.pem ubuntu@34.209.57.22'
-alias ssh_staging='ssh -J andrewkatz@data.giantpartners.com -A ubuntu@172.30.0.93'
 
 # VPN switching
 es() {
@@ -163,10 +180,22 @@ nvimrc() {
   cd $previous_dir
 }
 
+# small helpers
+pcurl() {
+  curl -s $1 | underscore print --outfmt pretty
+}
+
+convert_wav() {
+  lame -b 320 -h $1.wav $1.mp3
+  rm -rf $1.wav
+}
+
 # AI
 alias crush='crush --yolo'
-alias c='claude --dangerously-skip-permissions'
-alias cx='claude --allow-dangerously-skip-permissions --permission-mode plan'
+alias c="claude --model 'opus' --effort 'xhigh' --dangerously-skip-permissions"
+alias cx="claude --allow-dangerously-skip-permissions --permission-mode plan --effort 'xhigh' --model 'opus'"
+alias g='goose'
+alias gr='goose session -r'
 
 # yay (Linux)
 alias yayf="yay -Slq | fzf --multi --preview 'yay -Sii {1}' --preview-window=down:75% | xargs -ro yay -S"

@@ -1,0 +1,62 @@
+[projects."github.com/getcomfortly/inn_management"]
+approved-commands = [
+    """
+    cat > mise.local.toml <<EOF
+# Auto-generated for worktree: $next_num
+[env]
+PORT = {{ branch | hash_port }}
+DATABASE_PORT = {{ ("DATABASE_PORT" ~ branch) | hash_port }}
+DATABASE_SUFFIX = "_{{ ("DATABASE" ~ branch) | hash_port }}"
+MAILHOG_SMTP_PORT = {{ ("MAILHOG_SMTP_PORT" ~ branch) | hash_port }}
+MAILHOG_HTTP_PORT = {{ ("MAILHOG_HTTP_PORT" ~ branch) | hash_port }}
+EOF
+
+mise trust
+""",
+    "cp {{ primary_worktree_path }}/config/credentials/*.key config/credentials/ 2>/dev/null || true",
+    "mise exec -- docker-compose up -d ; sleep 2",
+    "mise exec -- bin/setup",
+    "mise exec -- docker-compose down",
+]
+
+[projects."github.com/giant-partners/platform"]
+approved-commands = [
+    """
+    cat > mise.local.toml <<EOF
+# Auto-generated for worktree: $next_num
+[env]
+PORT = {{ branch | hash_port }}
+DATABASE_PORT = {{ ("DATABASE_PORT" ~ branch) | hash_port }}
+REDIS_PORT = {{ ("REDIS_PORT" ~ branch) | hash_port }}
+MAILHOG_SMTP_PORT = {{ ("MAILHOG_SMTP_PORT" ~ branch) | hash_port }}
+MAILHOG_HTTP_PORT = {{ ("MAILHOG_HTTP_PORT" ~ branch) | hash_port }}
+AWS_REGION = "us-west-2"
+AWS_DEFAULT_PROFILE = "p"
+SNOWFLAKE_DEV_SUFFIX = "ANDREW_{{ branch | sanitize_db }}"
+EOF
+
+mise trust
+""",
+    "cp {{ primary_worktree_path }}/config/credentials/*.key config/credentials/ 2>/dev/null || true",
+    "mise exec -- docker-compose up -d ; sleep 2",
+    "mise exec -- bin/setup",
+    "mise exec -- docker-compose down",
+    "mise exec -- bin/cleanup",
+    """
+    cat > mise.local.toml <<EOF
+# Auto-generated for worktree: $next_num
+[env]
+PORT = {{ branch | hash_port }}
+WEB_PORT = {{ branch | hash_port }}
+DATABASE_PORT = {{ ("DATABASE_PORT" ~ branch) | hash_port }}
+REDIS_PORT = {{ ("REDIS_PORT" ~ branch) | hash_port }}
+MAILHOG_SMTP_PORT = {{ ("MAILHOG_SMTP_PORT" ~ branch) | hash_port }}
+MAILHOG_HTTP_PORT = {{ ("MAILHOG_HTTP_PORT" ~ branch) | hash_port }}
+AWS_REGION = "us-west-2"
+AWS_DEFAULT_PROFILE = "p"
+SNOWFLAKE_DEV_SUFFIX = "ANDREW_{{ branch | sanitize_db }}"
+EOF
+
+mise trust
+""",
+]
