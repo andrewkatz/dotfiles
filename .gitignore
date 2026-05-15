@@ -1,8 +1,29 @@
 .machine_name
-.claude/
 dot-zsh/compcache
 /dot-agents/.skill-lock.json
 dot-config/systemd/user/graphical-session.target.wants/
 dot-config/tmux/plugins/*
 dot-config/developerly/credentials.toml
 dot-config/worktrunk/*.lock
+
+# dot-claude: only track these specific things (everything else is cache/state/history)
+dot-claude/*
+!dot-claude/CLAUDE.md
+!dot-claude/settings.json
+!dot-claude/keybindings.json
+!dot-claude/dot-mcp.json
+!dot-claude/hooks
+!dot-claude/hooks/*
+
+# dot-pi: only track these (no caches/auth)
+dot-pi/*
+!dot-pi/agent
+dot-pi/agent/*
+!dot-pi/agent/extensions
+!dot-pi/agent/keybindings.json
+!dot-pi/agent/prompts
+!dot-pi/agent/settings.json
+dot-pi/agent/extensions/*
+!dot-pi/agent/extensions/*.ts
+!dot-pi/agent/extensions/*.json
+!dot-pi/agent/extensions/.gitignore

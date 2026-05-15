@@ -1,0 +1,235 @@
+{
+  "effortLevel": "xhigh",
+  "enabledPlugins": {
+    "frontend-design@claude-plugins-official": true,
+    "ruby-lsp@claude-plugins-official": true,
+    "swift-lsp@claude-plugins-official": true
+  },
+  "extraKnownMarketplaces": {
+    "compound-engineering-plugin": {
+      "source": {
+        "source": "git",
+        "url": "https://github.com/EveryInc/every-marketplace.git"
+      }
+    }
+  },
+  "hooks": {
+    "Elicitation": [
+      {
+        "hooks": [
+          {
+            "command": "\"$HOME\"/.claude/hooks/tmux-icon.sh ",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "command": "/Users/andrewkatz/.claude/hooks/developerly-status.sh notification",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "command": "\"$HOME\"/.claude/hooks/tmux-icon.sh ",
+            "type": "command"
+          }
+        ],
+        "matcher": "ExitPlanMode"
+      },
+      {
+        "hooks": [
+          {
+            "command": "[ -n \"$SUPERSET_HOME_DIR\" ] \u0026\u0026 [ -x \"$SUPERSET_HOME_DIR/hooks/notify.sh\" ] \u0026\u0026 SUPERSET_AGENT_ID=claude \"$SUPERSET_HOME_DIR/hooks/notify.sh\" || true",
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      },
+      {
+        "hooks": [
+          {
+            "command": "/Users/andrewkatz/.claude/hooks/developerly-status.sh permission_request",
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "\"$HOME\"/.claude/hooks/tmux-icon.sh ",
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "[ -n \"$SUPERSET_HOME_DIR\" ] \u0026\u0026 [ -x \"$SUPERSET_HOME_DIR/hooks/notify.sh\" ] \u0026\u0026 SUPERSET_AGENT_ID=claude \"$SUPERSET_HOME_DIR/hooks/notify.sh\" || true",
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      },
+      {
+        "hooks": [
+          {
+            "command": "/Users/andrewkatz/.claude/hooks/developerly-status.sh post_tool_use",
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "command": "[ -n \"$SUPERSET_HOME_DIR\" ] \u0026\u0026 [ -x \"$SUPERSET_HOME_DIR/hooks/notify.sh\" ] \u0026\u0026 SUPERSET_AGENT_ID=claude \"$SUPERSET_HOME_DIR/hooks/notify.sh\" || true",
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      },
+      {
+        "hooks": [
+          {
+            "command": "/Users/andrewkatz/.claude/hooks/developerly-status.sh post_tool_failure",
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "\"$HOME\"/.claude/hooks/tmux-icon.sh ",
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "/Users/andrewkatz/.claude/hooks/developerly-status.sh pre_tool_use",
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "command": "\"$HOME\"/.claude/hooks/tmux-icon.sh",
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "[ -n \"$SUPERSET_HOME_DIR\" ] \u0026\u0026 [ -x \"$SUPERSET_HOME_DIR/hooks/notify.sh\" ] \u0026\u0026 SUPERSET_AGENT_ID=claude \"$SUPERSET_HOME_DIR/hooks/notify.sh\" || true",
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "/Users/andrewkatz/.claude/hooks/developerly-status.sh session_end",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "\"$HOME\"/.claude/hooks/tmux-icon.sh ",
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "[ -n \"$SUPERSET_HOME_DIR\" ] \u0026\u0026 [ -x \"$SUPERSET_HOME_DIR/hooks/notify.sh\" ] \u0026\u0026 SUPERSET_AGENT_ID=claude \"$SUPERSET_HOME_DIR/hooks/notify.sh\" || true",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "\"$HOME\"/.claude/hooks/tmux-icon.sh ",
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "[ -n \"$SUPERSET_HOME_DIR\" ] \u0026\u0026 [ -x \"$SUPERSET_HOME_DIR/hooks/notify.sh\" ] \u0026\u0026 SUPERSET_AGENT_ID=claude \"$SUPERSET_HOME_DIR/hooks/notify.sh\" || true",
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "/Users/andrewkatz/.claude/hooks/developerly-status.sh stop",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "command": "\"$HOME\"/.claude/hooks/tmux-icon.sh ",
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "[ -n \"$SUPERSET_HOME_DIR\" ] \u0026\u0026 [ -x \"$SUPERSET_HOME_DIR/hooks/notify.sh\" ] \u0026\u0026 SUPERSET_AGENT_ID=claude \"$SUPERSET_HOME_DIR/hooks/notify.sh\" || true",
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "/Users/andrewkatz/.claude/hooks/developerly-status.sh user_prompt_submit",
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "defaultMode": "plan",
+    "disableAutoMode": "disable"
+  },
+  "skipDangerousModePermissionPrompt": true
+}
