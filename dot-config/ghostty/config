@@ -1,8 +1,11 @@
 adw-toolbar-style = flat
 app-notifications = false
 cursor-style = underline
+font-family = "JetBrainsMono Nerd Font"
 font-feature = -calt
-font-size = 11
 shell-integration-features = no-cursor
 theme = carbonfox
 window-theme = ghostty
+
+# Import platform-specific configuration
+config-file = ~/.config/local/ghostty
