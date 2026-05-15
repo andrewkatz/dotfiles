@@ -10,28 +10,28 @@ fi
 case "${PERCENTAGE}" in
   9[0-9]|100)
     ICON=""
-    COLOR=0xff4fd6be
+    COLOR=0xFF25be6a
   ;;
   [6-8][0-9])
     ICON=""
-    COLOR=0xffffc777
+    COLOR=0xFF08bdba
   ;;
   [3-5][0-9])
     ICON=""
-    COLOR=0xffff9e64
+    COLOR=0xFFff7eb6
   ;;
   [1-2][0-9])
     ICON=""
-    COLOR=0xffc53b53
+    COLOR=0xFFee5396
   ;;
   *)
     ICON=""
-    COLOR=0xff737aa2
+    COLOR=0xFF6f6f6f
 esac
 
 if [[ "$CHARGING" != "" ]]; then
   ICON=""
-  COLOR=0xffffc777
+  COLOR=0xFF08bdba
 fi
 
 # The item invoking this script (name $NAME) will get its icon and label

@@ -3,8 +3,8 @@ sketchybar --add item calendar.today left \
                                     label="" \
                                     icon.padding_left=$BRACKET_LEFT_PADDING \
                                     label.padding_right=$BRACKET_RIGHT_PADDING \
-                                    icon.color=0xFFfab387 \
-                                    label.color=0xFFfab387 \
+                                    icon.color=0xFFff7eb6 \
+                                    label.color=0xFFff7eb6 \
                                     update_freq=300 \
                                     script="$PLUGIN_DIR/calendar.sh" \
            --add bracket calendar '/calendar\./' \

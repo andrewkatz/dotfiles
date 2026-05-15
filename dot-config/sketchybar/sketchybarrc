@@ -5,10 +5,10 @@
 
 ITEM_DIR="$CONFIG_DIR/items"
 PLUGIN_DIR="$CONFIG_DIR/plugins"
-SCRIPT_DIR="$CONFIG_DIR/scripts"
 FONT_FAMILY="JetBrainsMono Nerd Font"
 
-BACKGROUND_COLOR=0x99313244
+# Carbon Fox palette
+BACKGROUND_COLOR=0x99161616
 BACKGROUND_CORNER_RADIUS=10
 BACKGROUND_HEIGHT=25
 BACKGROUND_OPTIONS=(
@@ -16,7 +16,7 @@ BACKGROUND_OPTIONS=(
   background.corner_radius="$BACKGROUND_CORNER_RADIUS"
   background.height="$BACKGROUND_HEIGHT"
   background.border_width=1
-  background.border_color=0xFF45475a
+  background.border_color=0xFF353535
 )
 
 
@@ -38,7 +38,7 @@ function spacer() {
 # If you are looking for other colors, see the color picker:
 # https://felixkratz.github.io/SketchyBar/config/tricks#color-picker
 
-sketchybar --bar position=top height=35 blur_radius=30 color=0x00000000
+sketchybar --bar position=top height=35 blur_radius=30 color=0x00000000 padding_left=9 padding_right=9
 
 ##### Changing Defaults #####
 # We now change some default values, which are applied to all further items.
@@ -50,8 +50,8 @@ default=(
   padding_right=5
   icon.font="$FONT_FAMILY:Bold:17.0"
   label.font="$FONT_FAMILY:Bold:14.0"
-  icon.color=0xffffffff
-  label.color=0xffcdd6f4
+  icon.color=0xFFf2f4f8
+  label.color=0xFFdfdfe0
   icon.padding_left=4
   icon.padding_right=4
   label.padding_left=4
@@ -60,14 +60,9 @@ default=(
 sketchybar --default "${default[@]}"
 
 # Left Items
-source "$ITEM_DIR/coffee.sh"
-source "$ITEM_DIR/project_time.sh"
-spacer "one" "left"
 source "$ITEM_DIR/aerospace.sh"
 spacer "zero" "left"
 source "$ITEM_DIR/calendar.sh"
-spacer "three" "left"
-source "$ITEM_DIR/focus.sh"
 
 # Right Items
 source "$ITEM_DIR/system_info.sh"
