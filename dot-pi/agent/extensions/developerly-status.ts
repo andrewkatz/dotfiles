@@ -39,17 +39,51 @@ function writeStatus(state: "idle" | "working" | "awaiting") {
 }
 
 export default function (_pi: ExtensionAPI) {
+  const awaitingToolCalls = new Set<string>();
+
+  function toolCallId(event: unknown): string | undefined {
+    return typeof (event as { toolCallId?: unknown }).toolCallId === "string"
+      ? (event as { toolCallId: string }).toolCallId
+      : undefined;
+  }
+
+  function toolName(event: unknown): string | undefined {
+    return typeof (event as { toolName?: unknown }).toolName === "string"
+      ? (event as { toolName: string }).toolName
+      : undefined;
+  }
+
   function markWorking(_event: unknown, _ctx: ExtensionContext) {
-    writeStatus("working");
+    writeStatus(awaitingToolCalls.size > 0 ? "awaiting" : "working");
   }
 
   function markIdle(_event: unknown, _ctx: ExtensionContext) {
+    awaitingToolCalls.clear();
     writeStatus("idle");
+  }
+
+  function markToolStart(event: unknown, _ctx: ExtensionContext) {
+    if (toolName(event) === "ask_user_question") {
+      const id = toolCallId(event);
+      if (id) awaitingToolCalls.add(id);
+      writeStatus("awaiting");
+      return;
+    }
+    markWorking(event, _ctx);
+  }
+
+  function markToolEnd(event: unknown, _ctx: ExtensionContext) {
+    if (toolName(event) === "ask_user_question") {
+      const id = toolCallId(event);
+      if (id) awaitingToolCalls.delete(id);
+    }
+    markWorking(event, _ctx);
   }
 
   _pi.on("before_agent_start", markWorking);
   _pi.on("agent_start", markWorking);
-  _pi.on("tool_execution_start", markWorking);
+  _pi.on("tool_execution_start", markToolStart);
+  _pi.on("tool_execution_end", markToolEnd);
   _pi.on("agent_end", markIdle);
   _pi.on("session_start", markIdle);
   _pi.on("session_shutdown", markIdle);
