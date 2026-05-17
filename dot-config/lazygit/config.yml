@@ -27,11 +27,6 @@ gui:
   authorColors:
     '*': '#b897f8'
 customCommands:
-  - key: "<c-d>"
-    command: "bundle exec kamal deploy"
-    context: "global"
-    loadingText: "Deploying with Kamal..."
-    output: log
   - key: "<c-n>"
     command: "git push --no-verify"
     context: "global"
