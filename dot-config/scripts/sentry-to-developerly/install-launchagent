@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+label="com.andrewkatz.sentry-to-developerly"
+script_path="$HOME/.config/scripts/sentry-to-developerly/sync"
+env_path="${SENTRY_TO_DEVELOPERLY_ENV:-$HOME/.config/sentry-to-developerly.env}"
+example_env="$HOME/.config/scripts/sentry-to-developerly/env.example"
+plist_path="$HOME/Library/LaunchAgents/$label.plist"
+log_dir="$HOME/Library/Logs"
+interval="${SENTRY_TO_DEVELOPERLY_INTERVAL:-300}"
+
+launch_target() {
+  echo "gui/$(id -u)"
+}
+
+uninstall() {
+  launchctl bootout "$(launch_target)" "$plist_path" 2>/dev/null || true
+  rm -f "$plist_path"
+  echo "Uninstalled $label"
+}
+
+if [[ "${1:-}" == "--uninstall" ]]; then
+  uninstall
+  exit 0
+fi
+
+mkdir -p "$(dirname "$env_path")" "$HOME/Library/LaunchAgents" "$log_dir"
+
+if [[ ! -f "$env_path" ]]; then
+  cp "$example_env" "$env_path"
+  chmod 600 "$env_path"
+  cat <<MESSAGE
+Created $env_path from $example_env.
+Fill in SENTRY_AUTH_TOKEN, SENTRY_ORG_SLUG, and SENTRY_PROJECT_SLUG, then rerun:
+
+  ~/.config/scripts/sentry-to-developerly/install-launchagent
+MESSAGE
+  exit 1
+fi
+
+# shellcheck source=/dev/null
+set -a
+source "$env_path"
+set +a
+
+missing=()
+[[ -n "${SENTRY_AUTH_TOKEN:-}" ]] || missing+=("SENTRY_AUTH_TOKEN")
+[[ -n "${SENTRY_ORG_SLUG:-}" ]] || missing+=("SENTRY_ORG_SLUG")
+if [[ -z "${SENTRY_PROJECT_SLUG:-}" && -z "${SENTRY_PROJECT_SLUGS:-}" ]]; then
+  missing+=("SENTRY_PROJECT_SLUG or SENTRY_PROJECT_SLUGS")
+fi
+
+if (( ${#missing[@]} > 0 )); then
+  printf 'Update %s before installing; missing: %s\n' "$env_path" "${missing[*]}" >&2
+  exit 1
+fi
+
+cat > "$plist_path" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$label</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>$script_path</string>
+    <string>--env</string>
+    <string>$env_path</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StartInterval</key>
+  <integer>$interval</integer>
+
+  <key>StandardOutPath</key>
+  <string>$log_dir/sentry-to-developerly.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>$log_dir/sentry-to-developerly.err.log</string>
+</dict>
+</plist>
+PLIST
+
+launchctl bootout "$(launch_target)" "$plist_path" 2>/dev/null || true
+launchctl bootstrap "$(launch_target)" "$plist_path"
+launchctl kickstart -k "$(launch_target)/$label"
+
+cat <<MESSAGE
+Installed $label.
+It will run every $interval seconds while your Mac is awake.
+
+Config: $env_path
+Logs:   $log_dir/sentry-to-developerly.log
+Errors: $log_dir/sentry-to-developerly.err.log
+
+Manual dry-run:
+  $script_path --env "$env_path" --dry-run
+
+Uninstall:
+  ~/.config/scripts/sentry-to-developerly/install-launchagent --uninstall
+MESSAGE

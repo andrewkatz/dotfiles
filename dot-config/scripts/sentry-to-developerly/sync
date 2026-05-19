@@ -1,0 +1,586 @@
+#!/usr/bin/env python3
+"""Create local Developerly tasks for unassigned Sentry issues."""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import fcntl
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+import traceback
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+DEFAULT_ENV_FILE = "~/.config/sentry-to-developerly.env"
+DEFAULT_SENTRY_BASE_URL = "https://sentry.io"
+DEFAULT_SENTRY_ASSIGNEE = "me"
+DEFAULT_SENTRY_QUERY = "is:unresolved"
+DEFAULT_SENTRY_ISSUE_LIMIT = 100
+DEFAULT_SENTRY_MAX_PAGES = 5
+DEFAULT_MAX_ISSUES_PER_RUN = 25
+DEFAULT_DESCRIPTION_MAX_CHARS = 30_000
+DEFAULT_LOCK_FILE = "/tmp/sentry-to-developerly.lock"
+DEFAULT_STATE_FILE = "~/.cache/sentry-to-developerly/processed.json"
+DEFAULT_DEVELOPERLY_PROJECT = "VIA"
+SENSITIVE_KEY_RE = re.compile(
+    r"authorization|cookie|password|passwd|secret|token|api[-_]?key|access[-_]?key|session|csrf|authenticity",
+    re.IGNORECASE,
+)
+
+
+def log(level: str, message: str) -> None:
+    timestamp = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    print(f"{timestamp} {level:<5} {message}", flush=True)
+
+
+def parse_env_file(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+
+    values: dict[str, str] = {}
+    for raw_line in path.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        if "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+
+        try:
+            parts = shlex.split(value, posix=True)
+            value = parts[0] if parts else ""
+        except ValueError:
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+                value = value[1:-1]
+        values[key] = os.path.expandvars(os.path.expanduser(value))
+
+    return values
+
+
+def merged_env(env_file: str) -> dict[str, str]:
+    values = parse_env_file(Path(env_file).expanduser())
+    values.update(os.environ)
+    return values
+
+
+def env_list(env: dict[str, str], *names: str) -> list[str]:
+    for name in names:
+        value = env.get(name, "")
+        if value.strip():
+            return [item.strip() for item in value.split(",") if item.strip()]
+    return []
+
+
+def env_int(env: dict[str, str], name: str, default: int) -> int:
+    value = env.get(name, "").strip()
+    return int(value) if value else default
+
+
+class Config:
+    def __init__(self, env: dict[str, str], dry_run: bool) -> None:
+        self.dry_run = dry_run
+        self.sentry_base_url = env.get("SENTRY_BASE_URL", DEFAULT_SENTRY_BASE_URL).rstrip("/")
+        self.sentry_auth_token = env.get("SENTRY_AUTH_TOKEN", "").strip()
+        self.sentry_org_slug = env.get("SENTRY_ORG_SLUG", "").strip()
+        self.sentry_project_slugs = env_list(env, "SENTRY_PROJECT_SLUGS", "SENTRY_PROJECT_SLUG")
+        self.sentry_assignee = env.get("SENTRY_ASSIGNEE", DEFAULT_SENTRY_ASSIGNEE).strip()
+        self.sentry_query = env.get("SENTRY_QUERY", DEFAULT_SENTRY_QUERY).strip()
+        self.sentry_issue_limit = env_int(env, "SENTRY_ISSUE_LIMIT", DEFAULT_SENTRY_ISSUE_LIMIT)
+        self.sentry_max_pages = env_int(env, "SENTRY_MAX_PAGES", DEFAULT_SENTRY_MAX_PAGES)
+        self.max_issues_per_run = env_int(env, "SENTRY_MAX_ISSUES_PER_RUN", DEFAULT_MAX_ISSUES_PER_RUN)
+        self.description_max_chars = env_int(env, "SENTRY_DESCRIPTION_MAX_CHARS", DEFAULT_DESCRIPTION_MAX_CHARS)
+        self.developerly_cli = env.get("DEVELOPERLY_CLI", default_developerly_cli()).strip()
+        self.developerly_project = env.get("DEVELOPERLY_PROJECT", DEFAULT_DEVELOPERLY_PROJECT).strip()
+        self.lock_file = env.get("SENTRY_TO_DEVELOPERLY_LOCK_FILE", DEFAULT_LOCK_FILE).strip()
+        self.state_file = env.get("SENTRY_TO_DEVELOPERLY_STATE_FILE", DEFAULT_STATE_FILE).strip()
+
+    def validate(self) -> None:
+        missing = []
+        if not self.sentry_auth_token:
+            missing.append("SENTRY_AUTH_TOKEN")
+        if not self.sentry_org_slug:
+            missing.append("SENTRY_ORG_SLUG")
+        if not self.sentry_project_slugs:
+            missing.append("SENTRY_PROJECT_SLUG or SENTRY_PROJECT_SLUGS")
+        if not self.developerly_project:
+            missing.append("DEVELOPERLY_PROJECT")
+        if missing:
+            raise RuntimeError(f"Missing required config: {', '.join(missing)}")
+
+
+def default_developerly_cli() -> str:
+    local = Path.home() / ".local/bin/developerly"
+    return str(local) if local.exists() else "developerly"
+
+
+class SentryClient:
+    def __init__(self, config: Config) -> None:
+        self.config = config
+
+    def get(self, path: str, params: dict[str, Any] | None = None) -> tuple[Any, dict[str, str]]:
+        return self.request("GET", self.url(path, params))
+
+    def get_url(self, url: str) -> tuple[Any, dict[str, str]]:
+        return self.request("GET", url)
+
+    def put(self, path: str, payload: dict[str, Any]) -> tuple[Any, dict[str, str]]:
+        return self.request("PUT", self.url(path), payload)
+
+    def request(self, method: str, url: str, payload: dict[str, Any] | None = None) -> tuple[Any, dict[str, str]]:
+        data = None
+        headers = {
+            "Accept": "application/json",
+            "Authorization": f"Bearer {self.config.sentry_auth_token}",
+        }
+        if payload is not None:
+            data = json.dumps(payload).encode()
+            headers["Content-Type"] = "application/json"
+
+        request = urllib.request.Request(url, data=data, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                body = response.read().decode()
+                parsed = json.loads(body) if body.strip() else None
+                return parsed, dict(response.headers)
+        except urllib.error.HTTPError as error:
+            body = error.read().decode(errors="replace")
+            raise RuntimeError(f"{method} {url} failed with {error.code}: {body[:500]}") from error
+        except urllib.error.URLError as error:
+            raise RuntimeError(f"{method} {url} failed: {error}") from error
+
+    def url(self, path: str, params: dict[str, Any] | None = None) -> str:
+        path = path if path.startswith("/") else f"/{path}"
+        url = f"{self.config.sentry_base_url}{path}"
+        if params:
+            url = f"{url}?{urllib.parse.urlencode(params)}"
+        return url
+
+
+class SentryToDeveloperly:
+    def __init__(self, config: Config) -> None:
+        self.config = config
+        self.sentry = SentryClient(config)
+        self.state_path = Path(config.state_file).expanduser()
+        self.state = self.load_state()
+        self._assignee: str | None = None
+
+    def run(self) -> None:
+        self.config.validate()
+        with Path(self.config.lock_file).open("w") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                log("INFO", f"Another sync is already running; lock_file={self.config.lock_file}")
+                return
+
+            log(
+                "INFO",
+                f"Starting Sentry → Developerly sync for {', '.join(self.config.sentry_project_slugs)}; "
+                f"project={self.config.developerly_project}; dry_run={self.config.dry_run}",
+            )
+            processed = 0
+            for project_slug in self.config.sentry_project_slugs:
+                processed += self.process_project(project_slug)
+            log("INFO", f"Finished Sentry → Developerly sync; processed={processed}")
+
+    def process_project(self, project_slug: str) -> int:
+        issues = self.unassigned_open_issues(project_slug)
+        log("INFO", f"Found {len(issues)} unassigned open Sentry issue(s) in {project_slug}")
+        processed = 0
+        for issue in issues:
+            try:
+                if self.process_issue(project_slug, issue):
+                    processed += 1
+            except Exception as error:  # noqa: BLE001 - top-level batch isolation
+                log("ERROR", f"Issue {issue.get('id')} failed: {type(error).__name__} - {error}")
+                traceback.print_exc()
+        return processed
+
+    def unassigned_open_issues(self, project_slug: str) -> list[dict[str, Any]]:
+        processed_issue_ids = set(self.state.get("issues", {}))
+        issues: list[dict[str, Any]] = []
+        response, headers = self.sentry.get(
+            f"/api/0/projects/{self.config.sentry_org_slug}/{project_slug}/issues/",
+            {
+                "query": self.config.sentry_query,
+                "limit": self.config.sentry_issue_limit,
+                "sort": "date",
+            },
+        )
+        pages_read = 1
+
+        while True:
+            issues.extend(
+                issue
+                for issue in response or []
+                if self.open_issue(issue)
+                and issue.get("assignedTo") is None
+                and str(issue.get("id")) not in processed_issue_ids
+            )
+            if len(issues) >= self.config.max_issues_per_run or pages_read >= self.config.sentry_max_pages:
+                break
+
+            next_url = self.next_page_url(headers.get("Link", ""))
+            if not next_url:
+                break
+            response, headers = self.sentry.get_url(next_url)
+            pages_read += 1
+
+        return issues[: self.config.max_issues_per_run]
+
+    def process_issue(self, project_slug: str, issue: dict[str, Any]) -> bool:
+        event = self.latest_event(issue)
+        description = SentryDescription(issue, event, project_slug, self.config.description_max_chars)
+
+        if self.config.dry_run:
+            log(
+                "INFO",
+                f"DRY RUN would create Developerly task in {self.config.developerly_project} "
+                f"for {issue_label(issue)} titled {description.title()!r}",
+            )
+            return True
+
+        task = self.create_developerly_task(description.title(), description.body())
+        log("INFO", f"Created Developerly task {task_id(task)} in {self.config.developerly_project} for {issue_label(issue)}")
+        self.record_processed(issue, task, assigned=False)
+        try:
+            self.assign_issue(issue)
+            self.record_processed(issue, task, assigned=True)
+        except Exception as error:  # noqa: BLE001 - task was created; do not duplicate on next run
+            log("ERROR", f"Developerly task was created, but assigning {issue_label(issue)} failed: {error}")
+        return True
+
+    def latest_event(self, issue: dict[str, Any]) -> dict[str, Any]:
+        try:
+            event, _headers = self.sentry.get(f"/api/0/issues/{issue['id']}/events/latest/")
+            return event or {}
+        except Exception as error:  # noqa: BLE001 - event detail is optional
+            log("WARN", f"Could not fetch latest Sentry event for {issue_label(issue)}: {error}")
+            return {}
+
+    def create_developerly_task(self, title: str, description: str) -> Any:
+        command = [
+            self.config.developerly_cli,
+            "--json",
+            "tasks",
+            "create",
+            "--project",
+            self.config.developerly_project,
+            "--title",
+            title,
+            "--description",
+            description,
+        ]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
+        if result.returncode != 0:
+            output = result.stderr.strip() or result.stdout.strip()
+            raise RuntimeError(f"{' '.join(command[:5])} failed: {output}")
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return {"output": result.stdout.strip()}
+
+    def assign_issue(self, issue: dict[str, Any]) -> None:
+        self.sentry.put(f"/api/0/issues/{issue['id']}/", {"assignedTo": self.assignee()})
+        log("INFO", f"Assigned {issue_label(issue)} to {self.assignee()}")
+
+    def assignee(self) -> str:
+        if self._assignee:
+            return self._assignee
+        configured = self.config.sentry_assignee
+        if re.fullmatch(r"\d+", configured):
+            self._assignee = f"user:{configured}"
+        else:
+            self._assignee = configured
+        return self._assignee
+
+    def load_state(self) -> dict[str, Any]:
+        if not self.state_path.exists():
+            return {"issues": {}}
+        try:
+            with self.state_path.open() as file:
+                state = json.load(file)
+        except (OSError, json.JSONDecodeError):
+            return {"issues": {}}
+        if not isinstance(state, dict):
+            return {"issues": {}}
+        if not isinstance(state.get("issues"), dict):
+            state["issues"] = {}
+        return state
+
+    def save_state(self) -> None:
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = self.state_path.with_suffix(".tmp")
+        with temp_path.open("w") as file:
+            json.dump(self.state, file, indent=2, sort_keys=True)
+            file.write("\n")
+        temp_path.replace(self.state_path)
+
+    def record_processed(self, issue: dict[str, Any], task: Any, assigned: bool) -> None:
+        issue_id = str(issue.get("id"))
+        self.state.setdefault("issues", {})[issue_id] = {
+            "short_id": issue.get("shortId"),
+            "task_id": task_id(task),
+            "assigned": assigned,
+            "processed_at": dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        }
+        self.save_state()
+
+    @staticmethod
+    def open_issue(issue: dict[str, Any]) -> bool:
+        status = str(issue.get("status") or "")
+        return status in {"", "unresolved"}
+
+    @staticmethod
+    def next_page_url(link_header: str) -> str | None:
+        for part in link_header.split(","):
+            if 'rel="next"' in part and 'results="true"' in part:
+                match = re.search(r"<([^>]+)>", part)
+                if match:
+                    return match.group(1)
+        return None
+
+
+class SentryDescription:
+    def __init__(self, issue: dict[str, Any], event: dict[str, Any], project_slug: str, max_chars: int) -> None:
+        self.issue = issue
+        self.event = event
+        self.project_slug = project_slug
+        self.max_chars = max_chars
+
+    def title(self) -> str:
+        raw = ": ".join(part for part in [self.issue.get("shortId"), self.issue_title()] if part)
+        title = f"[Sentry] {raw}"
+        return title if len(title) <= 180 else f"{title[:179]}…"
+
+    def body(self) -> str:
+        body = "\n\n".join(section for section in self.sections() if section)
+        if len(body) <= self.max_chars:
+            return body
+        return f"{body[: self.max_chars]}\n\n[Truncated at {self.max_chars} characters by sentry-to-developerly]"
+
+    def sections(self) -> list[str | None]:
+        return [
+            self.summary_section(),
+            self.exception_section(),
+            self.stack_trace_section(),
+            self.request_section(),
+            self.user_section(),
+            self.tags_section(),
+            self.context_section(),
+            self.breadcrumbs_section(),
+            "---\nCreated automatically by `sentry-to-developerly`. The Sentry issue is assigned only after this Developerly task is created successfully.",
+        ]
+
+    def summary_section(self) -> str:
+        lines = [
+            "# Sentry Issue",
+            "",
+            f"- **Issue**: {markdown_link(self.issue_title(), self.issue.get('permalink'))}",
+            f"- **Issue ID**: `{self.issue.get('id')}`",
+            f"- **Short ID**: `{self.issue.get('shortId')}`",
+            f"- **Project**: `{self.project_slug}`",
+            f"- **Level**: `{self.issue.get('level')}`",
+            f"- **Status**: `{self.issue.get('status')}`",
+            f"- **First seen**: {self.issue.get('firstSeen')}",
+            f"- **Last seen**: {self.issue.get('lastSeen')}",
+            f"- **Event count**: {self.issue.get('count')}",
+            f"- **User count**: {self.issue.get('userCount')}",
+            f"- **Culprit**: `{self.issue.get('culprit')}`",
+        ]
+        return "\n".join(lines)
+
+    def exception_section(self) -> str | None:
+        values = self.exception_values()
+        metadata = self.issue.get("metadata") or {}
+        if not values and not metadata:
+            return None
+
+        details = []
+        for value in values:
+            detail = "\n".join(
+                line
+                for line in [
+                    f"Type: {value.get('type')}",
+                    f"Value: {value.get('value')}",
+                    f"Module: {value.get('module')}",
+                    f"Mechanism: {compact_json(value.get('mechanism'))}",
+                ]
+                if not line.endswith(": None")
+            )
+            details.append(detail)
+        if metadata:
+            details.append(f"Metadata: {compact_json(metadata)}")
+        return f"## Exception\n\n{code_block(chr(10).join(details))}"
+
+    def stack_trace_section(self) -> str | None:
+        frames = []
+        for value in self.exception_values():
+            stacktrace = value.get("stacktrace") or {}
+            if isinstance(stacktrace, dict):
+                frames.extend(frame for frame in stacktrace.get("frames") or [] if isinstance(frame, dict))
+        if not frames:
+            return None
+        formatted = "\n".join(format_frame(frame) for frame in frames[-60:])
+        return f"## Stack Trace\n\n{code_block(formatted)}"
+
+    def request_section(self) -> str | None:
+        request = self.entry_data("request") or self.event.get("request")
+        if not request:
+            return None
+        return f"## Request\n\n{code_block(pretty_json(redact(request)), 'json')}"
+
+    def user_section(self) -> str | None:
+        user = self.event.get("user") or self.issue.get("user")
+        if not user:
+            return None
+        return f"## User\n\n{code_block(pretty_json(redact(user)), 'json')}"
+
+    def tags_section(self) -> str | None:
+        tags = normalize_tags(self.event.get("tags")) or normalize_tags(self.issue.get("tags"))
+        if not tags:
+            return None
+        lines = ["## Tags", ""] + [f"- `{key}`: `{value}`" for key, value in tags.items()]
+        return "\n".join(lines)
+
+    def context_section(self) -> str | None:
+        contexts = self.event.get("contexts")
+        if not contexts:
+            return None
+        return f"## Context\n\n{code_block(pretty_json(redact(contexts)), 'json')}"
+
+    def breadcrumbs_section(self) -> str | None:
+        breadcrumbs = [
+            breadcrumb
+            for breadcrumb in (self.entry_data("breadcrumbs") or {}).get("values") or []
+            if isinstance(breadcrumb, dict)
+        ]
+        if not breadcrumbs:
+            return None
+        lines = []
+        for breadcrumb in breadcrumbs[-30:]:
+            parts = [
+                breadcrumb.get("timestamp"),
+                breadcrumb.get("level"),
+                breadcrumb.get("category"),
+                breadcrumb.get("message"),
+                compact_json(redact(breadcrumb.get("data"))),
+            ]
+            lines.append(" | ".join(str(part) for part in parts if part))
+        return f"## Recent Breadcrumbs\n\n{code_block(chr(10).join(lines))}"
+
+    def issue_title(self) -> str:
+        return str(self.issue.get("title") or (self.issue.get("metadata") or {}).get("title") or "Untitled Sentry issue")
+
+    def exception_values(self) -> list[dict[str, Any]]:
+        data = self.entry_data("exception") or {}
+        values = data.get("values") if isinstance(data, dict) else []
+        return [value for value in values or [] if isinstance(value, dict)]
+
+    def entry_data(self, entry_type: str) -> dict[str, Any] | None:
+        for entry in self.event.get("entries") or []:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("type") == entry_type:
+                data = entry.get("data") or {}
+                return data if isinstance(data, dict) else {}
+        return None
+
+
+def format_frame(frame: dict[str, Any]) -> str:
+    filename = frame.get("filename") or frame.get("absPath") or frame.get("module") or "<unknown>"
+    line_no = frame.get("lineNo") or frame.get("line_no")
+    location = f"{filename}:{line_no}" if line_no else str(filename)
+    header = f"{location} in {frame.get('function') or '<unknown>'}"
+    if frame.get("inApp") or frame.get("in_app"):
+        header = f"{header} [in-app]"
+    context = frame.get("contextLine") or frame.get("context_line")
+    return f"{header}\n    {context}" if context else header
+
+
+def normalize_tags(tags: Any) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
+    for tag in tags or []:
+        if isinstance(tag, dict):
+            key = tag.get("key") or tag.get("name")
+            if key:
+                normalized[str(key)] = tag.get("value")
+        elif isinstance(tag, (list, tuple)) and len(tag) >= 2:
+            normalized[str(tag[0])] = tag[1]
+    return normalized
+
+
+def redact(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: "[REDACTED]" if SENSITIVE_KEY_RE.search(str(key)) else redact(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact(item) for item in value]
+    if isinstance(value, str) and len(value) > 5_000:
+        return f"{value[:5_000]}...[TRUNCATED]"
+    return value
+
+
+def pretty_json(value: Any) -> str:
+    return json.dumps(value, indent=2, sort_keys=True)
+
+
+def compact_json(value: Any) -> str | None:
+    if value in (None, {}):
+        return None
+    return json.dumps(value, sort_keys=True)
+
+
+def code_block(value: str, language: str = "") -> str:
+    return f"```{language}\n{value}\n```"
+
+
+def markdown_link(text: str, url: Any) -> str:
+    return f"[{text}]({url})" if url else text
+
+
+def issue_label(issue: dict[str, Any]) -> Any:
+    return issue.get("shortId") or issue.get("id")
+
+
+def task_id(task: Any) -> Any:
+    if isinstance(task, dict):
+        return task.get("id") or task.get("task", {}).get("id") or task.get("output") or task
+    return task
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Create local Developerly tasks for unassigned Sentry issues.")
+    parser.add_argument("--env", default=os.environ.get("SENTRY_TO_DEVELOPERLY_ENV", DEFAULT_ENV_FILE))
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args()
+
+    try:
+        env = merged_env(args.env)
+        sync = SentryToDeveloperly(Config(env, args.dry_run))
+        sync.run()
+        return 0
+    except Exception as error:  # noqa: BLE001 - command-line boundary
+        log("ERROR", f"{type(error).__name__}: {error}")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
