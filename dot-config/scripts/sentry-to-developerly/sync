@@ -365,8 +365,18 @@ class SentryDescription:
 
     def title(self) -> str:
         raw = ": ".join(part for part in [self.issue.get("shortId"), self.issue_title()] if part)
-        title = f"[Sentry] {raw}"
+        prefix = "[Sentry] [BETA]" if self.beta_environment() else "[Sentry]"
+        title = f"{prefix} {raw}"
         return title if len(title) <= 180 else f"{title[:179]}…"
+
+    def beta_environment(self) -> bool:
+        environments = [
+            self.issue.get("environment"),
+            self.event.get("environment"),
+            tag_value(self.issue.get("tags"), "environment"),
+            tag_value(self.event.get("tags"), "environment"),
+        ]
+        return any(is_beta_environment(environment) for environment in environments)
 
     def body(self) -> str:
         body = "\n\n".join(section for section in self.sections() if section)
@@ -523,6 +533,18 @@ def normalize_tags(tags: Any) -> dict[str, Any]:
         elif isinstance(tag, (list, tuple)) and len(tag) >= 2:
             normalized[str(tag[0])] = tag[1]
     return normalized
+
+
+def tag_value(tags: Any, key_name: str) -> Any:
+    key_name = key_name.lower()
+    for key, value in normalize_tags(tags).items():
+        if key.lower() == key_name:
+            return value
+    return None
+
+
+def is_beta_environment(value: Any) -> bool:
+    return str(value or "").strip().lower() == "beta"
 
 
 def redact(value: Any) -> Any:
