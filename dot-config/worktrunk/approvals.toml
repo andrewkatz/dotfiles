@@ -1,3 +1,23 @@
+[projects."github.com/andrewkatz/cue"]
+approved-commands = [
+    """
+    cat > mise.local.toml <<EOF
+# Auto-generated for worktree: $next_num
+[env]
+PORT = {{ branch | hash_port }}
+ADMIN_EMAIL = "andrew.katz@hey.com"
+ADMIN_PASSWORD = "testtest"
+EOF
+
+mise trust
+""",
+    """
+    cp {{ primary_worktree_path }}/config/master.key config/master.key 2>/dev/null || true
+    cp {{ primary_worktree_path }}/config/credentials/*.key config/credentials/ 2>/dev/null || true
+""",
+    "mise exec -- bin/setup --skip-server",
+]
+
 [projects."github.com/getcomfortly/developerly"]
 approved-commands = [
     "mise trust",
