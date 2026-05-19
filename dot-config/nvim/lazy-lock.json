@@ -1,5 +1,5 @@
 {
-  "ale": { "branch": "master", "commit": "916c8764ce9d395f788eae9adf207a4bfe8a038e" },
+  "ale": { "branch": "master", "commit": "2a3af30fb6a725ec7215435369b310b1d2dc4c09" },
   "alpha-nvim": { "branch": "main", "commit": "6c6a89d5b068b5251c8bdf0dd57bb921bcfeeb09" },
   "apiblueprint.vim": { "branch": "master", "commit": "776b9863e32a8ba59bf8a9656770a77c148c6e9c" },
   "gitsigns.nvim": { "branch": "main", "commit": "dd3f588bacbeb041be6facf1742e42097f62165d" },
