@@ -257,7 +257,6 @@
   },
   "skipDangerousModePermissionPrompt": true,
   "model": "opus",
-  "tui": "fullscreen",
   "agentPushNotifEnabled": true,
   "statusLine": {
     "command": "~/.config/scripts/claude-statusline",
