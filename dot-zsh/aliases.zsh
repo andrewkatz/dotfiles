@@ -69,6 +69,7 @@ alias prcf='gh pr create --fill'
 
 # wt (worktrunk)
 alias wtr='wt remove --force -D'
+alias wts='wt switch'
 
 function gbisect() {
   good=$1

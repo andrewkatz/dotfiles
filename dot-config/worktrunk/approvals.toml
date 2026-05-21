@@ -84,4 +84,23 @@ EOF
 
 mise trust
 """,
+    """
+    cat > mise.local.toml <<EOF
+# Auto-generated for worktree: $next_num
+[env]
+PORT = {{ branch | hash_port }}
+WEB_PORT = {{ branch | hash_port }}
+DATABASE_PORT = {{ ("DATABASE_PORT" ~ branch) | hash_port }}
+REDIS_PORT = {{ ("REDIS_PORT" ~ branch) | hash_port }}
+MAILHOG_SMTP_PORT = {{ ("MAILHOG_SMTP_PORT" ~ branch) | hash_port }}
+MAILHOG_HTTP_PORT = {{ ("MAILHOG_HTTP_PORT" ~ branch) | hash_port }}
+AWS_REGION = "us-west-2"
+AWS_DEFAULT_PROFILE = "p"
+SNOWFLAKE_DEV_SUFFIX = "ANDREW_{{ branch | sanitize_db }}"
+EOF
+
+    awk '/^[[:space:]]*KAMAL_SSH_PROXY_USER[[:space:]]*=/{ print; exit }' "{{ primary_worktree_path }}/mise.local.toml" >> mise.local.toml 2>/dev/null || true
+
+mise trust
+""",
 ]
