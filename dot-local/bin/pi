@@ -31,13 +31,13 @@ esac
 
 if [ -n "$node_dir" ] && [ -x "$pi_bin" ]; then
   export PATH="$node_dir/bin:$PATH"
-  exec "$pi_bin" "${flags[@]}" "$@"
+  exec "$pi_bin" ${flags[@]+"${flags[@]}"} "$@"
 fi
 
 # Fallback: pi isn't installed at the expected prefix yet (e.g. first run
 # before bin/install). Let mise fetch and run it transiently.
 if command -v mise >/dev/null 2>&1; then
-  exec mise exec -C "$HOME" "$pi_package" -- pi "${flags[@]}" "$@"
+  exec mise exec -C "$HOME" "$pi_package" -- pi ${flags[@]+"${flags[@]}"} "$@"
 fi
 
 echo "pi: not found at $pi_bin and mise is unavailable. Run bin/install." >&2
