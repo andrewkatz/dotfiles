@@ -7,60 +7,6 @@ theme = "carbon-fox"
 root_session = "developerly"
 root_session_tui = false
 
-[[projects]]
-  name = "Inn Management"
-  repo = "/Users/andrewkatz/Work/inn-management"
-  default_branch = "origin/main"
-  developerly_project_id = 1
-
-[[projects]]
-  name = "VIA"
-  repo = "/Users/andrewkatz/Work/platform"
-  default_branch = "origin/main"
-  developerly_project_id = 0
-
-[[projects]]
-  name = "Developerly"
-  repo = "/Users/andrewkatz/Work/developerly"
-  default_branch = "origin/main"
-  developerly_project_id = 2
-
-[[projects]]
-  name = "Super Awesome Workout 4000"
-  repo = "/Users/andrewkatz/Work/super-awesome-workout-4000"
-  default_branch = "origin/main"
-  developerly_project_id = 0
-
-[[projects]]
-  name = "Cue"
-  repo = "/Users/andrewkatz/Work/cue"
-  default_branch = "origin/main"
-  developerly_project_id = 0
-
-[[projects]]
-  name = "VIA Prototype"
-  repo = "/Users/andrewkatz/Work/via-prototype"
-  default_branch = "origin/main"
-  developerly_project_id = 0
-
-[[projects]]
-  name = "CORE"
-  repo = "/Users/andrewkatz/Work/core"
-  default_branch = "master"
-  developerly_project_id = 0
-
-[[projects]]
-  name = "dotfiles"
-  repo = "/Users/andrewkatz/Work/dotfiles"
-  default_branch = "main"
-  developerly_project_id = 0
-
-[[projects]]
-  name = "comfortly-prototype"
-  repo = "/Users/andrewkatz/Work/comfortly-prototype"
-  default_branch = "main"
-  developerly_project_id = 5
-
 [keys]
   assign_epic = ["a"]
   attach = ["enter"]

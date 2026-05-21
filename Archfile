@@ -52,6 +52,7 @@ noto-fonts-emoji
 ttf-jetbrains-mono-nerd
 
 # Shell + CLI essentials
+age
 base-devel
 bat
 btop
@@ -81,6 +82,7 @@ openssh
 ripgrep
 ruby-build
 sd
+sops
 starship
 stow
 tldr

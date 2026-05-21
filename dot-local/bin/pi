@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# Pi is installed into an isolated npm prefix (see bin/install) so it never
+# lives inside a mise-managed Node's bin dir. That keeps `mise activate zsh`
+# from prepending pi ahead of this shim on PATH, and lets this shim apply
+# PI_DEFAULT_* env overrides regardless of the cwd's pinned Node version.
+pi_install_dir="${PI_INSTALL_DIR:-$HOME/.local/share/pi-cli}"
+pi_bin="$pi_install_dir/bin/pi"
+pi_package="npm:@earendil-works/pi-coding-agent"
+
+node_dir="${PI_NODE_DIR:-}"
+if [ -z "$node_dir" ] && command -v mise >/dev/null 2>&1; then
+  node_dir="$(mise where -C "$HOME" node 2>/dev/null || true)"
+fi
+
+flags=()
+case "${1:-}" in
+  install|remove|uninstall|update|list|config)
+    ;;
+  *)
+    if [ -n "${PI_DEFAULT_PROVIDER:-}" ]; then
+      flags+=(--provider "$PI_DEFAULT_PROVIDER")
+    fi
+    if [ -n "${PI_DEFAULT_MODEL:-}" ]; then
+      flags+=(--model "$PI_DEFAULT_MODEL")
+    fi
+    ;;
+esac
+
+if [ -n "$node_dir" ] && [ -x "$pi_bin" ]; then
+  export PATH="$node_dir/bin:$PATH"
+  exec "$pi_bin" "${flags[@]}" "$@"
+fi
+
+# Fallback: pi isn't installed at the expected prefix yet (e.g. first run
+# before bin/install). Let mise fetch and run it transiently.
+if command -v mise >/dev/null 2>&1; then
+  exec mise exec -C "$HOME" "$pi_package" -- pi "${flags[@]}" "$@"
+fi
+
+echo "pi: not found at $pi_bin and mise is unavailable. Run bin/install." >&2
+exit 127

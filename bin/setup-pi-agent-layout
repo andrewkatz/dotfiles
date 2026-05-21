@@ -1,0 +1,348 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_dir="$(cd "$script_dir/.." && pwd)"
+
+source "$script_dir/lib/logging.sh"
+
+repo_pi="$repo_dir/dot-pi"
+repo_agent="$repo_pi/agent"
+home_pi="$HOME/.pi"
+home_agent="$home_pi/agent"
+share_agent="$HOME/.local/share/pi/agent"
+state_agent="$HOME/.local/state/pi/agent"
+
+fail() {
+  log_error "$1"
+  exit 1
+}
+
+entry_exists() {
+  [ -e "$1" ] || [ -L "$1" ]
+}
+
+is_generated_pi_agent_entry() {
+  case "$1" in
+    auth.json|npm|sessions|bin|git|*.log|*.lock)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+prepare_home_pi_dir() {
+  if [ -L "$home_pi" ]; then
+    if [ -e "$home_pi" ] && [ "$home_pi" -ef "$repo_pi" ]; then
+      log "Replacing ~/.pi directory symlink with a real directory so only ~/.pi/agent is linked."
+      rm "$home_pi"
+    else
+      fail "Refusing to replace existing ~/.pi symlink that does not point at this repo."
+    fi
+  fi
+
+  if entry_exists "$home_pi" && [ ! -d "$home_pi" ]; then
+    fail "Refusing to replace existing ~/.pi because it is not a directory."
+  fi
+
+  mkdir -p "$home_pi"
+}
+
+copy_file_to_repo() {
+  local src="$1"
+  local dst="$2"
+
+  if entry_exists "$dst"; then
+    if [ -f "$src" ] && [ -f "$dst" ] && cmp -s "$src" "$dst"; then
+      return
+    fi
+
+    log "Keeping repo Pi config ${dst/#$repo_dir\//}; local ${src/#$HOME\//} differs and will be preserved in the ~/.pi/agent backup."
+    return
+  fi
+
+  mkdir -p "$(dirname "$dst")"
+  cp -p "$src" "$dst"
+  log "Copied Pi config ${src/#$HOME\//} -> ${dst/#$repo_dir\//}"
+}
+
+copy_config_tree_to_repo() {
+  local src="$1"
+  local dst="$2"
+  local child rel child_dst
+
+  mkdir -p "$dst"
+
+  while IFS= read -r -d '' child; do
+    # Existing per-file stow layouts are mostly symlink farms back to the repo.
+    # Do not copy those symlinks; only copy real config files created locally.
+    if [ -L "$child" ]; then
+      continue
+    fi
+
+    rel="${child#$src/}"
+    child_dst="$dst/$rel"
+
+    if [ -d "$child" ]; then
+      mkdir -p "$child_dst"
+    elif [ -f "$child" ]; then
+      copy_file_to_repo "$child" "$child_dst"
+    else
+      fail "Refusing to migrate unsupported Pi config entry: ${child/#$HOME\//}"
+    fi
+  done < <(find "$src" -mindepth 1 -print0)
+}
+
+copy_existing_config_to_repo() {
+  if [ ! -d "$home_agent" ] || [ -L "$home_agent" ]; then
+    return
+  fi
+
+  local entry name
+
+  shopt -s dotglob nullglob
+  for entry in "$home_agent"/*; do
+    name="$(basename "$entry")"
+
+    if is_generated_pi_agent_entry "$name"; then
+      continue
+    fi
+
+    if [ -L "$entry" ]; then
+      continue
+    elif [ -d "$entry" ]; then
+      copy_config_tree_to_repo "$entry" "$repo_agent/$name"
+    elif [ -f "$entry" ]; then
+      copy_file_to_repo "$entry" "$repo_agent/$name"
+    else
+      fail "Refusing to migrate unsupported Pi config entry: ${entry/#$HOME\//}"
+    fi
+  done
+  shopt -u dotglob nullglob
+}
+
+externalize_file() {
+  local src="$1"
+  local dst="$2"
+  local initial_contents="$3"
+  local mode="$4"
+
+  mkdir -p "$(dirname "$dst")"
+
+  if [ -L "$src" ]; then
+    if entry_exists "$dst" && [ -e "$src" ] && [ "$src" -ef "$dst" ]; then
+      return
+    fi
+
+    if [ -e "$src" ]; then
+      if entry_exists "$dst"; then
+        if ! cmp -s "$src" "$dst"; then
+          fail "Refusing to replace ${src/#$repo_dir\//}; it points to content that differs from $dst."
+        fi
+      else
+        cp -p "$src" "$dst"
+      fi
+    fi
+
+    rm "$src"
+  elif entry_exists "$src"; then
+    if entry_exists "$dst"; then
+      if [ -f "$src" ] && [ -f "$dst" ] && cmp -s "$src" "$dst"; then
+        rm "$src"
+      else
+        fail "Refusing to overwrite existing Pi state at $dst from ${src/#$HOME\//}."
+      fi
+    else
+      mv "$src" "$dst"
+    fi
+  fi
+
+  if ! entry_exists "$dst"; then
+    printf '%s\n' "$initial_contents" > "$dst"
+  fi
+
+  chmod "$mode" "$dst" 2>/dev/null || true
+}
+
+unique_backup_path() {
+  local path="$1"
+  local label="$2"
+  local timestamp backup counter
+
+  timestamp="$(date +%Y%m%d%H%M%S)"
+  backup="${path}.${label}.${timestamp}"
+  counter=1
+
+  while entry_exists "$backup"; do
+    backup="${path}.${label}.${timestamp}.${counter}"
+    counter=$((counter + 1))
+  done
+
+  printf '%s\n' "$backup"
+}
+
+merge_dir_contents() {
+  local src="$1"
+  local dst="$2"
+  local item item_dst backup
+
+  mkdir -p "$dst"
+
+  shopt -s dotglob nullglob
+  for item in "$src"/*; do
+    item_dst="$dst/$(basename "$item")"
+
+    if [ -d "$item" ] && [ ! -L "$item" ]; then
+      if [ -d "$item_dst" ] && [ ! -L "$item_dst" ]; then
+        merge_dir_contents "$item" "$item_dst"
+        rmdir "$item" 2>/dev/null || true
+      elif entry_exists "$item_dst"; then
+        backup="$(unique_backup_path "$item_dst" "pre-pi-layout-backup")"
+        mv "$item_dst" "$backup"
+        mv "$item" "$item_dst"
+        log "Backed up conflicting Pi state ${item_dst/#$HOME\//} -> ${backup/#$HOME\//}."
+      else
+        mv "$item" "$item_dst"
+      fi
+    elif entry_exists "$item"; then
+      if entry_exists "$item_dst"; then
+        if [ -f "$item" ] && [ -f "$item_dst" ] && cmp -s "$item" "$item_dst"; then
+          rm "$item"
+        elif [ "$item" -nt "$item_dst" ]; then
+          backup="$(unique_backup_path "$item_dst" "pre-pi-layout-backup")"
+          mv "$item_dst" "$backup"
+          mv "$item" "$item_dst"
+          log "Backed up older Pi state ${item_dst/#$HOME\//} -> ${backup/#$HOME\//}."
+        else
+          backup="$(unique_backup_path "$item_dst" "from-old-pi-agent")"
+          mv "$item" "$backup"
+          log "Preserved duplicate Pi state ${item/#$HOME\//} -> ${backup/#$HOME\//}."
+        fi
+      else
+        mv "$item" "$item_dst"
+      fi
+    else
+      fail "Refusing to migrate unsupported Pi state entry: ${item/#$HOME\//}"
+    fi
+  done
+  shopt -u dotglob nullglob
+}
+
+externalize_dir() {
+  local src="$1"
+  local dst="$2"
+
+  mkdir -p "$dst"
+
+  if [ -L "$src" ]; then
+    if [ -e "$src" ] && [ "$src" -ef "$dst" ]; then
+      return
+    fi
+
+    fail "Refusing to replace existing ${src/#$repo_dir\//} symlink because it does not point at $dst."
+  elif [ -d "$src" ]; then
+    merge_dir_contents "$src" "$dst"
+    rmdir "$src" 2>/dev/null || true
+  elif entry_exists "$src"; then
+    fail "Refusing to migrate ${src/#$repo_dir\//}; expected a directory."
+  fi
+}
+
+ensure_symlink() {
+  local link="$1"
+  local target="$2"
+
+  mkdir -p "$(dirname "$link")" "$(dirname "$target")"
+
+  if [ -L "$link" ]; then
+    if [ -e "$link" ] && [ "$link" -ef "$target" ]; then
+      return
+    fi
+
+    rm "$link"
+  elif entry_exists "$link"; then
+    fail "Refusing to replace existing ${link/#$repo_dir\//}; expected it to be externalized first."
+  fi
+
+  ln -s "$target" "$link"
+}
+
+backup_old_home_agent() {
+  if [ -d "$home_agent" ] && [ ! -L "$home_agent" ]; then
+    local backup="$home_agent.backup.$(date +%Y%m%d%H%M%S)"
+    log "Moving old ~/.pi/agent directory aside to ${backup/#$HOME\//}."
+    mv "$home_agent" "$backup"
+  fi
+}
+
+ensure_home_agent_symlink() {
+  if [ -L "$home_agent" ]; then
+    if [ -e "$home_agent" ] && [ "$home_agent" -ef "$repo_agent" ]; then
+      return
+    fi
+
+    fail "Existing ~/.pi/agent symlink does not point at this repo."
+  fi
+
+  if entry_exists "$home_agent"; then
+    fail "Refusing to replace existing ~/.pi/agent because it is not the expected symlink."
+  fi
+
+  ln -s "$repo_agent" "$home_agent"
+  log "Linked ~/.pi/agent -> ${repo_agent/#$HOME\//}."
+}
+
+main() {
+  log "Setting up Pi agent directory layout..."
+
+  local home_agent_was_real_dir=false
+
+  mkdir -p "$repo_agent" "$share_agent" "$state_agent"
+  prepare_home_pi_dir
+
+  if [ -d "$home_agent" ] && [ ! -L "$home_agent" ]; then
+    home_agent_was_real_dir=true
+  fi
+
+  # Preserve any real config files that were created under the old partial-stow
+  # ~/.pi/agent directory before moving generated/private state elsewhere.
+  copy_existing_config_to_repo
+
+  externalize_file "$home_agent/auth.json" "$share_agent/auth.json" "{}" 600
+  externalize_dir "$home_agent/npm" "$share_agent/npm"
+  externalize_dir "$home_agent/bin" "$share_agent/bin"
+  externalize_dir "$home_agent/git" "$share_agent/git"
+  externalize_dir "$home_agent/sessions" "$state_agent/sessions"
+
+  # Keep the old real ~/.pi/agent usable until the final directory symlink is in
+  # place. This avoids leaving auth/session paths missing if setup is interrupted.
+  if [ "$home_agent_was_real_dir" = true ]; then
+    ensure_symlink "$home_agent/auth.json" "$share_agent/auth.json"
+    ensure_symlink "$home_agent/npm" "$share_agent/npm"
+    ensure_symlink "$home_agent/bin" "$share_agent/bin"
+    ensure_symlink "$home_agent/git" "$share_agent/git"
+    ensure_symlink "$home_agent/sessions" "$state_agent/sessions"
+  fi
+
+  # Also handle generated/private state that may already exist in the repo from
+  # a previous whole-directory ~/.pi or ~/.pi/agent symlink.
+  externalize_file "$repo_agent/auth.json" "$share_agent/auth.json" "{}" 600
+  externalize_dir "$repo_agent/npm" "$share_agent/npm"
+  externalize_dir "$repo_agent/bin" "$share_agent/bin"
+  externalize_dir "$repo_agent/git" "$share_agent/git"
+  externalize_dir "$repo_agent/sessions" "$state_agent/sessions"
+
+  ensure_symlink "$repo_agent/auth.json" "$share_agent/auth.json"
+  ensure_symlink "$repo_agent/npm" "$share_agent/npm"
+  ensure_symlink "$repo_agent/bin" "$share_agent/bin"
+  ensure_symlink "$repo_agent/git" "$share_agent/git"
+  ensure_symlink "$repo_agent/sessions" "$state_agent/sessions"
+
+  backup_old_home_agent
+  ensure_home_agent_symlink
+}
+
+main "$@"

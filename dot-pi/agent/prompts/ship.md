@@ -1,16 +1,19 @@
 ---
 description: Commit, push, open a PR, wait for checks, and merge
+argument-hint: "[base-branch]"
 ---
 
-Ship the current branch through to merge. The user has pre-authorized every git/gh action in this workflow — do not ask for confirmation before committing, pushing, creating, or merging the PR. Do not stop after an intermediate milestone like creating a branch, committing, pushing, or opening a PR; continue automatically through checks and merge unless a guardrail below explicitly says to stop and ask.
+Ship the current branch through to merge. Raw arguments: `$ARGUMENTS`. The optional argument is the PR base branch: use the single provided argument when present, otherwise use `main`. The user has pre-authorized every git/gh action in this workflow — do not ask for confirmation before committing, pushing, creating, or merging the PR. Do not stop after an intermediate milestone like creating a branch, committing, pushing, or opening a PR; continue automatically through checks and merge unless a guardrail below explicitly says to stop and ask.
 
 ## Preflight
 
+- Parse raw arguments (`$ARGUMENTS`). If empty, set `base_branch=main`. If exactly one branch name is provided, set `base_branch` to it. If more than one argument is provided, stop and ask for a single branch name.
+- Verify `base_branch` exists locally or on `origin` (`git rev-parse --verify refs/heads/<base_branch>` or `git rev-parse --verify refs/remotes/origin/<base_branch>`). If not, stop and ask.
 - `git status` + `git diff` + `git log -5 --oneline` in parallel to see pending changes and recent commit-message style.
-- If the current branch is `main` or `master`:
+- If the current branch is `base_branch`, `main`, or `master`:
   - If the working tree is clean, stop — there is nothing to ship.
   - Otherwise, derive a short kebab-case feature branch name from the pending diff (e.g. `fix/null-guard-booking-total`, `feat/guest-export-csv`). Match any branch-prefix convention visible in recent branches (`git branch -a --sort=-committerdate | head -20`).
-  - Create and switch to it with `git switch -c <name>`. Do **not** stash, reset, or discard any changes — the uncommitted work moves with the new branch.
+  - Create and switch to it with `git switch -c <name>`. Do **not** stash, reset, or discard any changes — the uncommitted work moves with the new branch. The PR should still target `base_branch`.
   - Do not pause after creating the branch. Continue directly to committing, pushing, opening the PR, waiting for checks, and merging.
 
 ## 1. Commit pending changes
@@ -27,8 +30,8 @@ Ship the current branch through to merge. The user has pre-authorized every git/
 
 ## 3. Open or find the PR
 
-- `gh pr view --json number,url,state,isDraft` — if a PR already exists for this branch, use it.
-- Otherwise `gh pr create` against the repo's default branch. Title < 70 chars. Body has a `## Summary` bullet list and a `## Test plan` checklist. Derive both from the actual diff across all commits on the branch (not just the latest).
+- `gh pr view --json number,url,state,isDraft,baseRefName` — if a PR already exists for this branch, use it. If its `baseRefName` differs from `base_branch`, stop and ask before retargeting it.
+- Otherwise create the PR with `gh pr create --base <base_branch>`. Title < 70 chars. Body has a `## Summary` bullet list and a `## Test plan` checklist. Derive both from the actual diff across all commits on the branch relative to `base_branch` (not just the latest commit).
 
 ## 4. Wait for checks
 
@@ -54,7 +57,7 @@ Ship the current branch through to merge. The user has pre-authorized every git/
 
 ## Guardrails (repeat — do not break these)
 
-- Never push to `main` or `master`.
+- Never push directly to `base_branch`, `main`, or `master`.
 - Never `--force` / `--force-with-lease` / `--no-verify` / `--amend`.
 - Never `git add -A`, `git add .`, or `git add -f`.
 - Never `git restore`, `git reset --hard`, or `git checkout --` to discard user changes.

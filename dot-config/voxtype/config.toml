@@ -80,18 +80,11 @@ gpu_isolation = true
 # threads = 4
 
 [output]
-# Primary output mode: "type" or "clipboard"
-# - type: Simulates keyboard input at cursor position (requires ydotool)
-# - clipboard: Copies text to clipboard (requires wl-copy)
-mode = "type"
-pre_type_delay_ms = 100  # Delay before typing starts (ms), useful for chat apps
-
-# Fall back to clipboard if typing fails
-fallback_to_clipboard = true
-
-# Delay between typed characters in milliseconds
-# 0 = fastest possible, increase if characters are dropped
-type_delay_ms = 5
+# Primary output mode: "type", "clipboard", "paste", or "file"
+# - paste: Copies text to clipboard, then simulates a paste keystroke
+#          at the cursor (requires wl-copy plus wtype/dotool/ydotool)
+mode = "paste"
+paste_keys = "ctrl+shift+v"  # Terminal-friendly paste shortcut
 
 # Automatically submit (send Enter key) after outputting transcribed text
 # Useful for chat applications, command lines, or forms where you want

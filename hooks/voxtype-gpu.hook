@@ -1,0 +1,10 @@
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = voxtype
+
+[Action]
+Description = Re-enabling VoxType GPU acceleration after package change...
+When = PostTransaction
+Exec = /usr/bin/voxtype setup gpu --enable

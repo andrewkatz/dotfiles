@@ -1,4 +1,4 @@
-^/bin
+^/bin$
 ^/README.md
 ^/CLAUDE.md
 ^/Brewfile
@@ -11,6 +11,7 @@
 ^/\.gitignore
 ^/\.stow-local-ignore
 ^/dot-zsh/compcache
+^/dot-pi$
 ^/hooks
 ^/darwin
 ^/docs

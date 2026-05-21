@@ -2,19 +2,77 @@
 
 set -e
 
-source "$(dirname "$0")/lib/logging.sh"
-source "$(dirname "$0")/clean-broken-symlinks"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_dir="$(cd "$script_dir/.." && pwd)"
+
+source "$script_dir/lib/logging.sh"
+source "$script_dir/clean-broken-symlinks"
+
+ONLY_STOW=false
+for arg in "$@"; do
+  case "$arg" in
+    --only-stow)
+      ONLY_STOW=true
+      ;;
+    -h|--help)
+      echo "Usage: $(basename "$0") [--only-stow]"
+      echo ""
+      echo "  --only-stow   Only run Pi layout and stow commands (skip package install, shell setup, etc.)"
+      exit 0
+      ;;
+    *)
+      log_error "Unknown argument: $arg"
+      exit 1
+      ;;
+  esac
+done
+
+run_stow() {
+  "$script_dir/setup-pi-agent-layout"
+
+  log "Installing dotfiles using stow..."
+  source "$script_dir/lib/stow.sh"
+  run_stow_command() {
+    set +e
+    "$@" 2>&1 | clean_stow_output
+    local status=${PIPESTATUS[0]}
+    set -e
+    return "$status"
+  }
+
+  clean_absolute_symlinks
+  (cd "$repo_dir" && run_stow_command stow --verbose=2 --dotfiles -t "$HOME" .)
+  clean_broken_symlinks
+
+  log "Installing platform-specific dotfiles..."
+  if [ "$(uname)" = "Darwin" ]; then
+    (cd "$repo_dir" && run_stow_command stow --verbose=2 --dotfiles -t "$HOME" -d . darwin)
+  elif [ "$(uname)" = "Linux" ]; then
+    (cd "$repo_dir" && run_stow_command stow --verbose=2 --dotfiles -t "$HOME" -d . linux)
+  fi
+  clean_broken_symlinks
+}
+
+if [ "$ONLY_STOW" = true ]; then
+  if [ -z "$(command -v stow)" ]; then
+    log_error "stow is not installed. Run '$(basename "$0")' without --only-stow first."
+    exit 1
+  fi
+  run_stow
+  exit 0
+fi
 
 install_package_manager() {
   if [ "$(uname)" = "Darwin" ]; then
     if [ -z "$(command -v brew)" ]; then
-      log "Homebew not found, installing..."
+      log "Homebrew not found, installing..."
       /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     fi
   elif [ "$(uname)" = "Linux" ]; then
     if [ -z "$(command -v yay)" ]; then
       log "yay not found, installing..."
       sudo pacman -S --noconfirm --needed git base-devel
+      rm -rf /tmp/yay
       git clone https://aur.archlinux.org/yay.git /tmp/yay
       pushd /tmp/yay
       makepkg -si
@@ -55,46 +113,36 @@ change_shell_to_zsh() {
       fi
     fi
 
-    log "Changing default shell to zsh..."
-    chsh -s /usr/bin/zsh
+    local zsh_path
+    zsh_path="$(command -v zsh)"
+    log "Changing default shell to zsh ($zsh_path)..."
+    chsh -s "$zsh_path"
     log "Default shell changed to zsh. Please logout and login again for changes to take effect."
     exit
   fi
 }
 
 init_tpm() {
-  if [ ! -d "$HOME/.config/tmux/plugins" ] ; then
+  if [ ! -d "$HOME/.config/tmux/plugins/tpm" ] ; then
     log "Initializing Tmux Plugin Manager (TPM)..."
-    git clone https://github.com/tmux-plugins/tpm $HOME/.config/tmux/plugins/tpm
-  fi
-}
-
-install_platform_overlay() {
-  local platform=""
-  if [ "$(uname)" = "Darwin" ]; then
-    platform="darwin"
-  elif [ "$(uname)" = "Linux" ]; then
-    platform="linux"
-  fi
-  if [ -n "$platform" ] && [ -d "$platform" ]; then
-    log "Installing $platform overlay..."
-    (cd "$platform" && stow --verbose=2 --dotfiles -t "$HOME" .)
+    mkdir -p "$HOME/.config/tmux/plugins"
+    git clone https://github.com/tmux-plugins/tpm "$HOME/.config/tmux/plugins/tpm"
   fi
 }
 
 archfile_packages() {
   # Print all uncommented, non-empty lines from Archfile, space-separated.
-  grep -v '^[[:space:]]*#' Archfile | grep -v '^[[:space:]]*$' | tr '\n' ' '
+  grep -v '^[[:space:]]*#' "$repo_dir/Archfile" | grep -v '^[[:space:]]*$' | tr '\n' ' '
 }
 
 install_packages() {
   if [ "$(uname)" = "Darwin" ]; then
-    if [ -f Brewfile ]; then
+    if [ -f "$repo_dir/Brewfile" ]; then
       log "Installing Brewfile packages..."
-      brew bundle --file=Brewfile
+      brew bundle --file="$repo_dir/Brewfile"
     fi
   elif [ "$(uname)" = "Linux" ]; then
-    if [ -f Archfile ]; then
+    if [ -f "$repo_dir/Archfile" ]; then
       log "Installing Archfile packages..."
       # shellcheck disable=SC2046
       yay -S --needed --noconfirm $(archfile_packages)
@@ -102,13 +150,100 @@ install_packages() {
   fi
 }
 
+install_pi_dev() {
+  # Install pi into an isolated npm prefix so it lives at
+  # $HOME/.local/share/pi-cli/bin/pi and never sits inside a mise-managed
+  # Node's bin dir. That way `mise activate zsh` can't prepend pi ahead of the
+  # ~/.local/bin/pi shim (which handles PI_DEFAULT_* env overrides and pins
+  # the runtime to the global mise Node).
+  local pi_prefix="$HOME/.local/share/pi-cli"
+  local pi_package="@earendil-works/pi-coding-agent"
+  local node_dir
+
+  if ! command -v mise >/dev/null 2>&1; then
+    log_error "mise not found; cannot install pi"
+    return 1
+  fi
+
+  node_dir="$(mise where -C "$HOME" node 2>/dev/null || true)"
+  if [ -z "$node_dir" ]; then
+    log "No global mise node; installing node@lts..."
+    mise use -g node@lts
+    node_dir="$(mise where -C "$HOME" node)"
+  fi
+
+  # Cleanup: prior installs may have placed pi inside the mise node (via
+  # pi.dev/install.sh or `npm install -g`), which `mise activate` prepends
+  # ahead of ~/.local/bin and shadows the shim.
+  if [ -e "$node_dir/bin/pi" ]; then
+    log "Removing pi from mise-managed node to avoid PATH shadowing..."
+    PATH="$node_dir/bin:$PATH" npm uninstall -g "$pi_package" >/dev/null 2>&1 || true
+  fi
+
+  # Cleanup: if pi was tracked via `mise use -g npm:...`, drop it too.
+  if mise ls 2>/dev/null | grep -q "npm:$pi_package"; then
+    log "Removing mise-tracked npm:$pi_package..."
+    mise use -g --rm "npm:$pi_package" >/dev/null 2>&1 || true
+  fi
+
+  log "Installing pi into $pi_prefix (isolated from mise PATH)..."
+  PATH="$node_dir/bin:$PATH" npm install -g --prefix="$pi_prefix" --silent "$pi_package"
+}
+
+install_developerly() {
+  if [ -z "$(command -v developerly)" ]; then
+    log "developerly not found, installing..."
+    curl -fsSL https://raw.githubusercontent.com/getcomfortly/developerly-cli/main/install.sh | sh
+  fi
+
+  # Make developerly visible to this script even if ~/.local/bin isn't on PATH yet.
+  if [ -z "$(command -v developerly)" ] && [ -x "$HOME/.local/bin/developerly" ]; then
+    export PATH="$HOME/.local/bin:$PATH"
+  fi
+
+  if command -v developerly >/dev/null 2>&1; then
+    log "Installing developerly hooks..."
+    developerly hooks install
+    log "Installing developerly skills..."
+    developerly skill install --global --force
+  else
+    log_error "developerly install appears to have failed; skipping hooks/skills."
+  fi
+}
+
+install_pacman_hooks() {
+  log "Installing pacman hooks..."
+  sudo mkdir -p /etc/pacman.d/hooks
+  sudo cp "$repo_dir"/hooks/*.hook /etc/pacman.d/hooks/
+}
+
+setup_voxtype_gpu() {
+  if command -v voxtype >/dev/null 2>&1; then
+    log "Ensuring VoxType GPU acceleration is enabled..."
+    sudo voxtype setup gpu --enable
+  fi
+}
+
+source "$script_dir/ss"
+
 install_package_manager
 install_stow
 change_shell_to_zsh
 init_tpm
 
-log "Installing dotfiles using stow..."
-stow --verbose=2 --dotfiles -t $HOME .
-install_platform_overlay
+run_stow
+
 install_packages
-clean_broken_symlinks
+install_pi_dev
+install_developerly
+
+# install_secrets uses sops + age (see bin/ss). On a fresh box this will fail
+# cleanly if the age key hasn't been copied to ~/.config/sops/age/keys.txt yet;
+# the rest of the install should still complete. Re-run bin/install (or bin/ss)
+# after the key is in place.
+install_secrets || log_error "Continuing despite secrets install failure; re-run bin/ss after seeding the age key."
+
+if [ "$(uname)" = "Linux" ]; then
+  install_pacman_hooks
+  setup_voxtype_gpu
+fi
