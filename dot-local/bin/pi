@@ -9,6 +9,7 @@ set -euo pipefail
 pi_install_dir="${PI_INSTALL_DIR:-$HOME/.local/share/pi-cli}"
 pi_bin="$pi_install_dir/bin/pi"
 pi_package="npm:@earendil-works/pi-coding-agent"
+original_pwd="$PWD"
 
 node_dir="${PI_NODE_DIR:-}"
 if [ -z "$node_dir" ] && command -v mise >/dev/null 2>&1; then
@@ -35,9 +36,10 @@ if [ -n "$node_dir" ] && [ -x "$pi_bin" ]; then
 fi
 
 # Fallback: pi isn't installed at the expected prefix yet (e.g. first run
-# before bin/install). Let mise fetch and run it transiently.
+# before bin/install). Let mise fetch/run it using the global HOME tool config,
+# then cd back so callers like Developerly still launch Pi in the worktree.
 if command -v mise >/dev/null 2>&1; then
-  exec mise exec -C "$HOME" "$pi_package" -- pi ${flags[@]+"${flags[@]}"} "$@"
+  exec mise exec -C "$HOME" "$pi_package" -- bash -c 'cd "$1" || exit $?; shift; exec pi "$@"' _ "$original_pwd" ${flags[@]+"${flags[@]}"} "$@"
 fi
 
 echo "pi: not found at $pi_bin and mise is unavailable. Run bin/install." >&2
