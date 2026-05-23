@@ -4,6 +4,7 @@ dot-zsh/compcache
 dot-config/systemd/user/graphical-session.target.wants/
 dot-config/tmux/plugins/*
 dot-config/developerly/credentials.toml
+dot-local/bin/developerly
 dot-config/worktrunk/*.lock
 
 # dot-claude: only track these specific things (everything else is cache/state/history)

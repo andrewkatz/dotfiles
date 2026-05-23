@@ -1,2 +1,5 @@
 [settings]
 trusted_config_paths = ["/Users/andrewkatz/.superset/worktrees", "/Users/andrewkatz/Work"]
+
+[tools]
+node = "lts"
