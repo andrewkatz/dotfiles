@@ -12,8 +12,8 @@ bin/install
 
 Linux installs support profiles:
 
-- `bin/install --profile dev` — full bare-Arch development desktop: shared dev packages plus Hyprland/Wayland tools, the app bundle, and desktop hooks. This is the default for a new Linux machine.
-- `bin/install --profile minimal` — CachyOS/Plasma-friendly setup: shared shell/CLI/dev packages and dotfiles only; skips Hyprland packages/autostart, the app bundle, and VoxType/GPU pacman hooks.
+- `bin/install --profile dev` — full bare-Arch development desktop: shared dev packages plus Hyprland/Wayland tools, optional desktop apps, and desktop hooks. This is the default for a new Linux machine.
+- `bin/install --profile minimal` — CachyOS/Plasma-friendly setup: shared dev packages, 1Password, Chromium, and dotfiles; skips Hyprland packages/autostart, optional desktop apps, and VoxType/GPU pacman hooks.
 
 Both profiles stow the same dotfiles; the profile controls package selection, Hyprland autostart, and Linux desktop post-install hooks. The selected Linux profile is saved in `~/.local/state/dotfiles/linux-profile`, so future `bin/install` runs reuse it unless `--profile` or `DOTFILES_LINUX_PROFILE` overrides it. This repo does not install NVIDIA drivers; leave distro-managed GPU drivers alone unless you explicitly need the full desktop profile extras.
 

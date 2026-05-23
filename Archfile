@@ -69,3 +69,8 @@ openslide
 restic
 rust
 terraform
+
+# Applications needed on every Linux profile
+1password
+1password-cli
+chromium

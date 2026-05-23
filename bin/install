@@ -76,8 +76,8 @@ Options:
   --profile PROFILE  Linux install profile. Defaults to the saved profile, then 'dev'.
 
 Linux profiles:
-  dev      Full bare-Arch development desktop: shared dev packages plus Hyprland, Wayland desktop tools, app bundle, and desktop hooks.
-  minimal  CachyOS/Plasma-friendly setup: shared shell/CLI/dev packages only; skips Hyprland installs/autostart, the app bundle, and VoxType GPU hooks.
+  dev      Full bare-Arch development desktop: shared dev packages plus Hyprland, Wayland desktop tools, optional desktop apps, and desktop hooks.
+  minimal  CachyOS/Plasma-friendly setup: shared dev packages plus 1Password and Chromium; skips Hyprland installs/autostart, optional desktop apps, and VoxType GPU hooks.
 
 Profile aliases:
   dev:     full, hyprland, bare-arch, desktop
@@ -398,11 +398,10 @@ install_packages
 install_pi_dev
 install_developerly
 
-# install_secrets uses sops + age (see bin/ss). On a fresh box this will fail
-# cleanly if the age key hasn't been copied to ~/.config/sops/age/keys.txt yet;
-# the rest of the install should still complete. Re-run bin/install (or bin/ss)
-# after the key is in place.
-install_secrets || log_error "Continuing despite secrets install failure; re-run bin/ss after seeding the age key."
+# install_secrets uses sops + age (see bin/ss). On a fresh box without an
+# age key, this is optional and should only print setup instructions. Re-run
+# bin/ss after the key is in place.
+install_secrets || log "Skipping secrets install; re-run bin/ss after seeding the age key."
 
 if [ "$(uname)" = "Linux" ]; then
   install_pacman_hooks

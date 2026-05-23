@@ -25,11 +25,11 @@ check_secrets_tooling() {
   fi
 
   if [ ! -f "$SOPS_AGE_KEY_FILE" ]; then
-    log_error "age key not found at $SOPS_AGE_KEY_FILE"
-    log_error "Copy it from a known-good machine, e.g.:"
-    log_error "  mkdir -p $(dirname "$SOPS_AGE_KEY_FILE")"
-    log_error "  scp known-good:$SOPS_AGE_KEY_FILE $SOPS_AGE_KEY_FILE"
-    log_error "  chmod 600 $SOPS_AGE_KEY_FILE"
+    log "No sops age key configured at $SOPS_AGE_KEY_FILE; skipping private secrets."
+    log "To enable secrets later, copy the key from a known-good machine, e.g.:"
+    log "  mkdir -p $(dirname "$SOPS_AGE_KEY_FILE")"
+    log "  scp known-good:$SOPS_AGE_KEY_FILE $SOPS_AGE_KEY_FILE"
+    log "  chmod 600 $SOPS_AGE_KEY_FILE"
     return 1
   fi
 
@@ -129,7 +129,6 @@ install_secrets() {
   log "Installing secrets from sops..."
 
   if ! check_secrets_tooling; then
-    log_error "Skipping secrets install."
     return 1
   fi
 

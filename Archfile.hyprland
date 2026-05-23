@@ -44,11 +44,8 @@ libsecret
 polkit-gnome
 seahorse
 
-# Applications
-1password
-1password-cli
+# Optional desktop applications
 brave-bin
-chromium
 firefox
 obsidian
 slack-desktop-wayland
