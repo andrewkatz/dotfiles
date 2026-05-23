@@ -1,8 +1,22 @@
-# Auto-start Hyprland on Linux login
+# Auto-start Hyprland only on Linux machines using the full dev profile.
 if [[ "$(uname)" == "Linux" ]]; then
-  if uwsm check may-start -g 120 > /dev/null; then
-    exec uwsm start hyprland-uwsm.desktop
+  dotfiles_linux_profile="${DOTFILES_LINUX_PROFILE:-}"
+  dotfiles_linux_profile_file="${XDG_STATE_HOME:-$HOME/.local/state}/dotfiles/linux-profile"
+
+  if [[ -z "$dotfiles_linux_profile" && -r "$dotfiles_linux_profile_file" ]]; then
+    dotfiles_linux_profile="$(head -n 1 "$dotfiles_linux_profile_file")"
   fi
+  dotfiles_linux_profile="${dotfiles_linux_profile:l}"
+
+  case "$dotfiles_linux_profile" in
+    dev|full|hyprland|bare-arch|desktop)
+      if command -v uwsm >/dev/null 2>&1 && uwsm check may-start -g 120 > /dev/null; then
+        exec uwsm start hyprland-uwsm.desktop
+      fi
+      ;;
+  esac
+
+  unset dotfiles_linux_profile dotfiles_linux_profile_file
 fi
 
 # OrbStack (macOS only, login shell)

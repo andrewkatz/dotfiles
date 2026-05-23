@@ -1,51 +1,5 @@
-# Hyprland + Wayland
-hypridle
-hyprland
-hyprlock
-hyprpaper
-hyprshot
-uwsm
-waybar
-walker
-mako
-wl-clipboard
-wtype
-xdg-desktop-portal-hyprland
-
-# Walker (elephant) data providers
-elephant
-elephant-bluetooth
-elephant-calc
-elephant-clipboard
-elephant-desktopapplications
-elephant-files
-elephant-menus
-elephant-providerlist
-elephant-runner
-elephant-symbols
-elephant-todo
-elephant-unicode
-elephant-websearch
-
-# Audio
-pipewire
-wireplumber
-
-# Bluetooth
-bluez
-bluez-utils
-
-# Security / auth
-gnome-keyring
-polkit-gnome
-libsecret
-seahorse
-
-# Network / power
-brightnessctl
-playerctl
-power-profiles-daemon
-tailscale
+# Shared Arch/CachyOS packages installed by every Linux profile.
+# `bin/install --profile dev` also installs Archfile.hyprland.
 
 # Fonts
 noto-fonts-emoji
@@ -72,6 +26,7 @@ jq
 lazydocker
 lazygit
 less
+magic-wormhole
 man-db
 mise
 mosh
@@ -85,11 +40,14 @@ sd
 sops
 starship
 stow
+syncthing
+tailscale
 tldr
 tmux
 tree-sitter-cli
 unzip
 wget
+wl-clipboard
 worktrunk-bin
 xclip
 yamllint
@@ -111,27 +69,3 @@ openslide
 restic
 rust
 terraform
-
-# Applications
-1password
-1password-cli
-brave-bin
-chromium
-firefox
-obsidian
-slack-desktop-wayland
-zoom
-
-# AI tools
-codename-goose-bin
-ollama
-opencode
-
-# Linux QoL
-bluetuith            # bluetooth TUI
-gpu-screen-recorder
-impala               # wifi TUI
-magic-wormhole       # one-off file transfer
-syncthing            # file sync
-voxtype              # voice-to-text
-xournalpp            # PDF annotation

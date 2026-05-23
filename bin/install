@@ -9,23 +9,126 @@ source "$script_dir/lib/logging.sh"
 source "$script_dir/clean-broken-symlinks"
 
 ONLY_STOW=false
-for arg in "$@"; do
-  case "$arg" in
+LINUX_PROFILE_INPUT="${DOTFILES_LINUX_PROFILE:-}"
+
+linux_profile_state_file() {
+  printf '%s/dotfiles/linux-profile\n' "${XDG_STATE_HOME:-$HOME/.local/state}"
+}
+
+normalize_linux_profile() {
+  local profile
+  profile="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+
+  case "$profile" in
+    dev|full|hyprland|bare-arch|desktop)
+      printf 'dev\n'
+      ;;
+    minimal|gaming|cachyos|catchyos|cachy|catchy|plasma|kde)
+      printf 'minimal\n'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+read_saved_linux_profile() {
+  local profile_file
+  profile_file="$(linux_profile_state_file)"
+
+  if [ -r "$profile_file" ]; then
+    head -n 1 "$profile_file"
+  fi
+
+  return 0
+}
+
+linux_profile_description() {
+  case "$LINUX_PROFILE" in
+    dev)
+      printf 'full bare-Arch Hyprland workstation\n'
+      ;;
+    minimal)
+      printf 'minimal CachyOS/Plasma development dotfiles\n'
+      ;;
+  esac
+}
+
+write_linux_profile() {
+  if [ "$(uname)" != "Linux" ]; then
+    return 0
+  fi
+
+  local profile_file
+  profile_file="$(linux_profile_state_file)"
+
+  mkdir -p "$(dirname "$profile_file")"
+  printf '%s\n' "$LINUX_PROFILE" > "$profile_file"
+  log "Using Linux profile '$LINUX_PROFILE' ($(linux_profile_description))."
+}
+
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [--only-stow] [--profile PROFILE]
+
+Options:
+  --only-stow        Only run Pi layout and stow commands (skip package install, shell setup, etc.)
+  --profile PROFILE  Linux install profile. Defaults to the saved profile, then 'dev'.
+
+Linux profiles:
+  dev      Full bare-Arch development desktop: shared dev packages plus Hyprland, Wayland desktop tools, app bundle, and desktop hooks.
+  minimal  CachyOS/Plasma-friendly setup: shared shell/CLI/dev packages only; skips Hyprland installs/autostart, the app bundle, and VoxType GPU hooks.
+
+Profile aliases:
+  dev:     full, hyprland, bare-arch, desktop
+  minimal: gaming, cachyos, catchyos, cachy, plasma, kde
+
+Environment:
+  DOTFILES_LINUX_PROFILE can also set the Linux profile.
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
     --only-stow)
       ONLY_STOW=true
       ;;
+    --profile)
+      shift
+      if [ "$#" -eq 0 ]; then
+        log_error "--profile requires a value"
+        exit 1
+      fi
+      LINUX_PROFILE_INPUT="$1"
+      ;;
+    --profile=*)
+      LINUX_PROFILE_INPUT="${1#--profile=}"
+      ;;
     -h|--help)
-      echo "Usage: $(basename "$0") [--only-stow]"
-      echo ""
-      echo "  --only-stow   Only run Pi layout and stow commands (skip package install, shell setup, etc.)"
+      show_help
       exit 0
       ;;
     *)
-      log_error "Unknown argument: $arg"
+      log_error "Unknown argument: $1"
       exit 1
       ;;
   esac
+  shift
 done
+
+LINUX_PROFILE_RAW="$LINUX_PROFILE_INPUT"
+if [ -z "$LINUX_PROFILE_RAW" ] && [ "$(uname)" = "Linux" ]; then
+  LINUX_PROFILE_RAW="$(read_saved_linux_profile)"
+fi
+if [ -z "$LINUX_PROFILE_RAW" ]; then
+  LINUX_PROFILE_RAW="dev"
+fi
+
+if ! LINUX_PROFILE="$(normalize_linux_profile "$LINUX_PROFILE_RAW")"; then
+  log_error "Unknown Linux profile: $LINUX_PROFILE_RAW"
+  show_help
+  exit 1
+fi
 
 run_stow() {
   "$script_dir/setup-pi-agent-layout"
@@ -58,9 +161,20 @@ if [ "$ONLY_STOW" = true ]; then
     log_error "stow is not installed. Run '$(basename "$0")' without --only-stow first."
     exit 1
   fi
+  write_linux_profile
   run_stow
   exit 0
 fi
+
+aur_helper() {
+  if command -v yay >/dev/null 2>&1; then
+    printf 'yay\n'
+  elif command -v paru >/dev/null 2>&1; then
+    printf 'paru\n'
+  else
+    return 1
+  fi
+}
 
 install_package_manager() {
   if [ "$(uname)" = "Darwin" ]; then
@@ -69,8 +183,8 @@ install_package_manager() {
       /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     fi
   elif [ "$(uname)" = "Linux" ]; then
-    if [ -z "$(command -v yay)" ]; then
-      log "yay not found, installing..."
+    if ! aur_helper >/dev/null 2>&1; then
+      log "No AUR helper found, installing yay..."
       sudo pacman -S --noconfirm --needed git base-devel
       rm -rf /tmp/yay
       git clone https://aur.archlinux.org/yay.git /tmp/yay
@@ -91,7 +205,7 @@ install_stow() {
     if [ "$(uname)" = "Darwin" ]; then
       brew install stow
     elif [ "$(uname)" = "Linux" ]; then
-      yay -S --noconfirm stow
+      "$(aur_helper)" -S --noconfirm stow
     else
       log_error "Unsupported OS for stow installation"
       exit 1
@@ -106,7 +220,7 @@ change_shell_to_zsh() {
       if [ "$(uname)" = "Darwin" ]; then
         brew install zsh
       elif [ "$(uname)" = "Linux" ]; then
-        yay -S --noconfirm zsh
+        "$(aur_helper)" -S --noconfirm zsh
       else
         log_error "Unsupported OS for zsh installation"
         exit 1
@@ -130,9 +244,23 @@ init_tpm() {
   fi
 }
 
+arch_manifest_files() {
+  printf '%s\n' "$repo_dir/Archfile"
+
+  if [ "$LINUX_PROFILE" = "dev" ]; then
+    printf '%s\n' "$repo_dir/Archfile.hyprland"
+  fi
+}
+
 archfile_packages() {
-  # Print all uncommented, non-empty lines from Archfile, space-separated.
-  grep -v '^[[:space:]]*#' "$repo_dir/Archfile" | grep -v '^[[:space:]]*$' | tr '\n' ' '
+  # Print all package names from the given manifests, ignoring blank lines,
+  # full-line comments, and inline comments.
+  local manifest
+
+  for manifest in "$@"; do
+    [ -f "$manifest" ] || continue
+    sed 's/[[:space:]]*#.*$//' "$manifest"
+  done | awk 'NF { print $1 }' | awk '!seen[$0]++' | tr '\n' ' '
 }
 
 install_packages() {
@@ -142,10 +270,25 @@ install_packages() {
       brew bundle --file="$repo_dir/Brewfile"
     fi
   elif [ "$(uname)" = "Linux" ]; then
-    if [ -f "$repo_dir/Archfile" ]; then
-      log "Installing Archfile packages..."
-      # shellcheck disable=SC2046
-      yay -S --needed --noconfirm $(archfile_packages)
+    local manifests=()
+    local manifest
+    local manifest_names=""
+    local packages
+
+    while IFS= read -r manifest; do
+      if [ -f "$manifest" ]; then
+        manifests+=("$manifest")
+        manifest_names="${manifest_names:+$manifest_names, }$(basename "$manifest")"
+      fi
+    done < <(arch_manifest_files)
+
+    if [ "${#manifests[@]}" -gt 0 ]; then
+      log "Installing Arch packages for '$LINUX_PROFILE' profile from $manifest_names..."
+      packages="$(archfile_packages "${manifests[@]}")"
+      if [ -n "$packages" ]; then
+        # shellcheck disable=SC2086
+        "$(aur_helper)" -S --needed --noconfirm $packages
+      fi
     fi
   fi
 }
@@ -212,12 +355,30 @@ install_developerly() {
 }
 
 install_pacman_hooks() {
+  local hook
+
+  if [ "$LINUX_PROFILE" != "dev" ]; then
+    log "Removing dotfiles desktop pacman hooks for '$LINUX_PROFILE' profile..."
+    if [ -d /etc/pacman.d/hooks ]; then
+      for hook in "$repo_dir"/hooks/*.hook; do
+        [ -e "$hook" ] || continue
+        sudo rm -f "/etc/pacman.d/hooks/$(basename "$hook")"
+      done
+    fi
+    return 0
+  fi
+
   log "Installing pacman hooks..."
   sudo mkdir -p /etc/pacman.d/hooks
   sudo cp "$repo_dir"/hooks/*.hook /etc/pacman.d/hooks/
 }
 
 setup_voxtype_gpu() {
+  if [ "$LINUX_PROFILE" != "dev" ]; then
+    log "Skipping VoxType GPU setup for '$LINUX_PROFILE' profile."
+    return 0
+  fi
+
   if command -v voxtype >/dev/null 2>&1; then
     log "Ensuring VoxType GPU acceleration is enabled..."
     sudo voxtype setup gpu --enable
@@ -226,6 +387,7 @@ setup_voxtype_gpu() {
 
 source "$script_dir/ss"
 
+write_linux_profile
 install_package_manager
 install_stow
 change_shell_to_zsh

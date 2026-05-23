@@ -1,0 +1,67 @@
+# Full bare-Arch Hyprland workstation additions.
+# Installed by `bin/install --profile dev`.
+
+# Hyprland + Wayland desktop
+hypridle
+hyprland
+hyprlock
+hyprpaper
+hyprshot
+mako
+uwsm
+walker
+waybar
+wtype
+xdg-desktop-portal-hyprland
+
+# Walker (elephant) data providers
+elephant
+elephant-bluetooth
+elephant-calc
+elephant-clipboard
+elephant-desktopapplications
+elephant-files
+elephant-menus
+elephant-providerlist
+elephant-runner
+elephant-symbols
+elephant-todo
+elephant-unicode
+elephant-websearch
+
+# Desktop audio, Bluetooth, and hardware
+bluez
+bluez-utils
+brightnessctl
+pipewire
+playerctl
+power-profiles-daemon
+wireplumber
+
+# Desktop security / auth
+gnome-keyring
+libsecret
+polkit-gnome
+seahorse
+
+# Applications
+1password
+1password-cli
+brave-bin
+chromium
+firefox
+obsidian
+slack-desktop-wayland
+zoom
+
+# AI tools
+codename-goose-bin
+ollama
+opencode
+
+# Linux QoL
+bluetuith
+gpu-screen-recorder
+impala
+voxtype
+xournalpp

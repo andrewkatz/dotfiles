@@ -4,6 +4,7 @@
 ^/Brewfile
 ^/Brewfile.lock.json
 ^/Archfile
+^/Archfile.hyprland
 ^/Archfile.lock
 ^/.config/tmux/plugins
 .machine_name

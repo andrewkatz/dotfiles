@@ -3,7 +3,7 @@
 main()
 {
   update_brew
-  update_yay
+  update_arch
   update_vim
 
   log "done"
@@ -19,11 +19,26 @@ update_brew()
   fi
 }
 
-update_yay()
+update_arch()
 {
   if [ "$(uname)" = "Linux" ]; then
-    log "yay"
-    yay -Syu --noconfirm
+    local helper
+    helper="$(aur_helper)" || return 1
+
+    log "$helper"
+    "$helper" -Syu --noconfirm
+  fi
+}
+
+aur_helper()
+{
+  if command -v yay >/dev/null 2>&1; then
+    printf 'yay\n'
+  elif command -v paru >/dev/null 2>&1; then
+    printf 'paru\n'
+  else
+    echo "No AUR helper found (expected yay or paru)." >&2
+    return 1
   fi
 }
 
