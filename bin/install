@@ -231,8 +231,7 @@ change_shell_to_zsh() {
     zsh_path="$(command -v zsh)"
     log "Changing default shell to zsh ($zsh_path)..."
     chsh -s "$zsh_path"
-    log "Default shell changed to zsh. Please logout and login again for changes to take effect."
-    exit
+    log "Default shell changed to zsh. Continuing install; logout/login later for the shell change to take effect."
   fi
 }
 
