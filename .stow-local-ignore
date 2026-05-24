@@ -4,6 +4,7 @@
 ^/Brewfile
 ^/Brewfile.lock.json
 ^/Archfile
+^/Archfile.desktop
 ^/Archfile.hyprland
 ^/Archfile.lock
 ^/.config/tmux/plugins

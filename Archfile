@@ -1,9 +1,6 @@
-# Shared Arch/CachyOS packages installed by every Linux profile.
-# `bin/install --profile dev` also installs Archfile.hyprland.
-
-# Fonts
-noto-fonts-emoji
-ttf-jetbrains-mono-nerd
+# Shared Arch/CachyOS CLI/headless packages installed by every Linux profile,
+# including WSL. Desktop GUI packages live in Archfile.desktop; Hyprland
+# additions live in Archfile.hyprland.
 
 # Shell + CLI essentials
 age
@@ -61,7 +58,6 @@ zsh
 docker
 docker-buildx
 docker-compose
-ghostty
 go
 libvips
 ngrok
@@ -70,7 +66,5 @@ restic
 rust
 terraform
 
-# Applications needed on every Linux profile
-1password
+# CLI applications needed on every Linux profile
 1password-cli
-chromium

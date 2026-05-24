@@ -36,14 +36,44 @@ check_secrets_tooling() {
   return 0
 }
 
+github_https_from_ssh() {
+  local url="$1"
+  case "$url" in
+    git@github.com:*)
+      printf 'https://github.com/%s\n' "${url#git@github.com:}"
+      ;;
+    ssh://git@github.com/*)
+      printf 'https://github.com/%s\n' "${url#ssh://git@github.com/}"
+      ;;
+    *)
+      printf '%s\n' "$url"
+      ;;
+  esac
+}
+
 ensure_secrets_repo() {
   if [ ! -d "$SECRETS_REPO_DIR/.git" ]; then
     log "Cloning secrets repo to $SECRETS_REPO_DIR..."
     mkdir -p "$(dirname "$SECRETS_REPO_DIR")"
     if ! git clone "$SECRETS_REPO_URL" "$SECRETS_REPO_DIR"; then
-      log_error "Failed to clone $SECRETS_REPO_URL"
-      log_error "Make sure your SSH key has access (e.g. ssh -T git@github.com)."
-      return 1
+      # SSH may not be set up on a fresh box (e.g. WSL). If the configured URL
+      # is an SSH GitHub URL, retry with HTTPS so git's credential helper /
+      # `gh auth login` can carry the auth.
+      local https_url
+      https_url="$(github_https_from_ssh "$SECRETS_REPO_URL")"
+      if [ "$https_url" != "$SECRETS_REPO_URL" ]; then
+        log "SSH clone failed; retrying via HTTPS ($https_url)..."
+        rm -rf "$SECRETS_REPO_DIR"
+        if ! git clone "$https_url" "$SECRETS_REPO_DIR"; then
+          log_error "Failed to clone $SECRETS_REPO_URL (SSH) or $https_url (HTTPS)."
+          log_error "Authenticate first: 'gh auth login' (HTTPS) or 'ssh -T git@github.com' (SSH)."
+          return 1
+        fi
+      else
+        log_error "Failed to clone $SECRETS_REPO_URL"
+        log_error "Authenticate first: 'gh auth login' (HTTPS) or 'ssh -T git@github.com' (SSH)."
+        return 1
+      fi
     fi
   else
     git -C "$SECRETS_REPO_DIR" pull --ff-only --quiet 2>/dev/null || \

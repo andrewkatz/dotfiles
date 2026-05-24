@@ -26,6 +26,9 @@ normalize_linux_profile() {
     minimal|gaming|cachyos|catchyos|cachy|catchy|plasma|kde)
       printf 'minimal\n'
       ;;
+    wsl|windows|microsoft)
+      printf 'wsl\n'
+      ;;
     *)
       return 1
       ;;
@@ -50,6 +53,9 @@ linux_profile_description() {
       ;;
     minimal)
       printf 'minimal CachyOS/Plasma development dotfiles\n'
+      ;;
+    wsl)
+      printf 'headless Arch on Windows WSL (terminal + dev only)\n'
       ;;
   esac
 }
@@ -78,10 +84,12 @@ Options:
 Linux profiles:
   dev      Full bare-Arch development desktop: shared dev packages plus Hyprland, Wayland desktop tools, optional desktop apps, and desktop hooks.
   minimal  CachyOS/Plasma-friendly setup: shared dev packages plus 1Password and Chromium; skips Hyprland installs/autostart, optional desktop apps, and VoxType GPU hooks.
+  wsl      Headless Arch on Windows WSL: shared CLI/dev packages only; skips fonts, GUI apps, Hyprland, and desktop hooks.
 
 Profile aliases:
   dev:     full, hyprland, bare-arch, desktop
   minimal: gaming, cachyos, catchyos, cachy, plasma, kde
+  wsl:     windows, microsoft
 
 Environment:
   DOTFILES_LINUX_PROFILE can also set the Linux profile.
@@ -229,6 +237,22 @@ change_shell_to_zsh() {
 
     local zsh_path
     zsh_path="$(command -v zsh)"
+
+    # chsh only accepts paths listed in /etc/shells. command -v may resolve
+    # to a path that points at the same binary but isn't listed (e.g.
+    # /usr/sbin/zsh on Arch, where /usr/sbin is a symlink to /usr/bin).
+    # Prefer a path that's already listed; otherwise append the one we found.
+    if [ -r /etc/shells ]; then
+      local listed_zsh
+      listed_zsh="$(grep -E '/zsh$' /etc/shells | head -n 1)"
+      if [ -n "$listed_zsh" ] && [ -x "$listed_zsh" ]; then
+        zsh_path="$listed_zsh"
+      elif ! grep -qxF "$zsh_path" /etc/shells; then
+        log "Adding $zsh_path to /etc/shells so chsh will accept it..."
+        printf '%s\n' "$zsh_path" | sudo tee -a /etc/shells >/dev/null
+      fi
+    fi
+
     log "Changing default shell to zsh ($zsh_path)..."
     chsh -s "$zsh_path"
     log "Default shell changed to zsh. Continuing install; logout/login later for the shell change to take effect."
@@ -245,6 +269,10 @@ init_tpm() {
 
 arch_manifest_files() {
   printf '%s\n' "$repo_dir/Archfile"
+
+  if [ "$LINUX_PROFILE" != "wsl" ]; then
+    printf '%s\n' "$repo_dir/Archfile.desktop"
+  fi
 
   if [ "$LINUX_PROFILE" = "dev" ]; then
     printf '%s\n' "$repo_dir/Archfile.hyprland"

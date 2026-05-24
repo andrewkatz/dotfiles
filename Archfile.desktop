@@ -1,0 +1,13 @@
+# Shared Arch/CachyOS desktop packages installed by the `dev` and `minimal`
+# Linux profiles. Skipped by the `wsl` profile.
+
+# Fonts
+noto-fonts-emoji
+ttf-jetbrains-mono-nerd
+
+# GUI terminal
+ghostty
+
+# Applications
+1password
+chromium
