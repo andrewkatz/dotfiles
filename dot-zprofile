@@ -22,4 +22,10 @@ fi
 # OrbStack (macOS only, login shell)
 if [[ "$(uname)" == "Darwin" ]] ; then
   source ~/.orbstack/shell/init.zsh 2>/dev/null || :
+
+  # macOS runs /usr/libexec/path_helper from /etc/zprofile after ~/.zshenv,
+  # which can move /opt/homebrew/bin back ahead of user shims. Re-promote the
+  # stowed user bins in login shells so ~/.local/bin/pi wins over global pi.
+  export PATH="./bin:$HOME/.bin:$HOME/.local/bin:$HOME/bin:$HOME/.config/scripts/:$HOME/.yarn/bin:$HOME/.config/yarn/global/node_modules/.bin:$PATH"
+  typeset -U PATH
 fi
