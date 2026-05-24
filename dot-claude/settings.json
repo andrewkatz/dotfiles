@@ -28,7 +28,7 @@
       {
         "hooks": [
           {
-            "command": "/Users/andrewkatz/.claude/hooks/developerly-status.sh notification",
+            "command": "\"$HOME\"/.claude/hooks/developerly-status.sh notification",
             "type": "command"
           }
         ]
@@ -56,7 +56,7 @@
       {
         "hooks": [
           {
-            "command": "/Users/andrewkatz/.claude/hooks/developerly-status.sh permission_request",
+            "command": "\"$HOME\"/.claude/hooks/developerly-status.sh permission_request",
             "type": "command"
           }
         ],
@@ -84,7 +84,7 @@
       {
         "hooks": [
           {
-            "command": "/Users/andrewkatz/.claude/hooks/developerly-status.sh post_tool_use",
+            "command": "\"$HOME\"/.claude/hooks/developerly-status.sh post_tool_use",
             "type": "command"
           }
         ],
@@ -104,7 +104,7 @@
       {
         "hooks": [
           {
-            "command": "/Users/andrewkatz/.claude/hooks/developerly-status.sh post_tool_failure",
+            "command": "\"$HOME\"/.claude/hooks/developerly-status.sh post_tool_failure",
             "type": "command"
           }
         ],
@@ -123,7 +123,7 @@
       {
         "hooks": [
           {
-            "command": "/Users/andrewkatz/.claude/hooks/developerly-status.sh pre_tool_use",
+            "command": "\"$HOME\"/.claude/hooks/developerly-status.sh pre_tool_use",
             "type": "command"
           }
         ],
@@ -150,7 +150,7 @@
       {
         "hooks": [
           {
-            "command": "/Users/andrewkatz/.claude/hooks/developerly-status.sh session_end",
+            "command": "\"$HOME\"/.claude/hooks/developerly-status.sh session_end",
             "type": "command"
           }
         ]
@@ -194,7 +194,7 @@
       {
         "hooks": [
           {
-            "command": "/Users/andrewkatz/.claude/hooks/developerly-status.sh stop",
+            "command": "\"$HOME\"/.claude/hooks/developerly-status.sh stop",
             "type": "command"
           }
         ]
@@ -220,7 +220,7 @@
       {
         "hooks": [
           {
-            "command": "/Users/andrewkatz/.claude/hooks/developerly-status.sh user_prompt_submit",
+            "command": "\"$HOME\"/.claude/hooks/developerly-status.sh user_prompt_submit",
             "type": "command"
           }
         ]
