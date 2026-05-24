@@ -267,6 +267,23 @@ init_tpm() {
   fi
 }
 
+install_tpm_plugins() {
+  local installer="$HOME/.config/tmux/plugins/tpm/bin/install_plugins"
+
+  if [ ! -x "$installer" ]; then
+    log "TPM installer not found at $installer; skipping tmux plugin install."
+    return 0
+  fi
+
+  if ! command -v tmux >/dev/null 2>&1; then
+    log "tmux not installed; skipping TPM plugin install."
+    return 0
+  fi
+
+  log "Installing tmux plugins via TPM..."
+  "$installer"
+}
+
 arch_manifest_files() {
   printf '%s\n' "$repo_dir/Archfile"
 
@@ -423,6 +440,7 @@ init_tpm
 run_stow
 
 install_packages
+install_tpm_plugins
 install_pi_dev
 install_developerly
 
