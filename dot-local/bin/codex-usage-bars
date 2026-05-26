@@ -22,6 +22,10 @@ from typing import Any
 
 DEFAULT_TTL_SECONDS = 60
 DEFAULT_TIMEOUT_SECONDS = 5
+DEFAULT_CODEX_PROVIDER_TTL_SECONDS = 60
+DEFAULT_CLAUDE_PROVIDER_TTL_SECONDS = 10 * 60
+DEFAULT_FAILURE_BACKOFF_SECONDS = 5 * 60
+DEFAULT_RATE_LIMIT_BACKOFF_SECONDS = 30 * 60
 
 CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
@@ -32,6 +36,7 @@ CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials"
 CACHE_VERSION = 5
 LOCK_MAX_AGE_SECONDS = 120
 TOKEN_REFRESH_SKEW_SECONDS = 60
+LOG_MAX_BYTES = 256 * 1024
 
 # Pill styling. Background colors fade darker -> lighter L->R and must stay in
 # sync with the agent/session pills configured in tmux.conf.
@@ -42,12 +47,21 @@ PILL_FG_CLAUDE_LABEL = "#cbd5e1"
 PILL_FG_VALUE = "#f1f5f9"
 PILL_FG_WARN = "#fbbf24"
 PILL_FG_DANGER = "#f87171"
-CODEX_ICON = "\U000f06a9"  # nf-md-robot
-CLAUDE_ICON = "✦"     # Black Four Pointed Star — plain Unicode, always renders
+CODEX_ICON = "\ue795"
+CLAUDE_ICON = "\U000f06a9"  # nf-md-robot
 
 
 class UsageError(Exception):
     """Expected provider/auth/response issue while collecting usage."""
+
+
+class HTTPUsageError(UsageError):
+    """HTTP failure from a usage endpoint."""
+
+    def __init__(self, status_code: int, url: str, body: str, retry_after_seconds: int | None = None):
+        super().__init__(f"HTTP {status_code} from {url}: {body}")
+        self.status_code = status_code
+        self.retry_after_seconds = retry_after_seconds
 
 
 def env_int(name: str, default: int) -> int:
@@ -62,6 +76,22 @@ def env_int(name: str, default: int) -> int:
 
 def timeout_seconds() -> int:
     return env_int("CODEX_USAGE_BARS_TIMEOUT", DEFAULT_TIMEOUT_SECONDS)
+
+
+def provider_ttl_seconds(provider: str) -> int:
+    if provider == "claude":
+        return env_int("CODEX_USAGE_BARS_CLAUDE_TTL", DEFAULT_CLAUDE_PROVIDER_TTL_SECONDS)
+    if provider == "codex":
+        return env_int("CODEX_USAGE_BARS_CODEX_TTL", DEFAULT_CODEX_PROVIDER_TTL_SECONDS)
+    return DEFAULT_TTL_SECONDS
+
+
+def failure_backoff_seconds(error: BaseException) -> int:
+    if isinstance(error, HTTPUsageError) and error.status_code == 429:
+        if error.retry_after_seconds is not None:
+            return max(60, error.retry_after_seconds)
+        return env_int("CODEX_USAGE_BARS_RATE_LIMIT_BACKOFF", DEFAULT_RATE_LIMIT_BACKOFF_SECONDS)
+    return env_int("CODEX_USAGE_BARS_FAILURE_BACKOFF", DEFAULT_FAILURE_BACKOFF_SECONDS)
 
 
 def usage_mode() -> str:
@@ -85,6 +115,13 @@ def cache_file() -> Path:
 
 def lock_file() -> Path:
     return cache_file().with_suffix(".lock")
+
+
+def log_file() -> Path:
+    override = os.environ.get("CODEX_USAGE_BARS_LOG")
+    if override:
+        return Path(override).expanduser()
+    return cache_dir() / "codex-usage-bars.log"
 
 
 def codex_auth_file() -> Path:
@@ -139,6 +176,92 @@ def render_chain(codex_percent: float | None, claude_percent: float | None) -> s
     ))
 
 
+def parse_cached_percent(output: str, label: str) -> float | None:
+    match = re.search(rf"\b{re.escape(label)}\b.*?(\d+(?:\.\d+)?)%", output, re.IGNORECASE)
+    if not match:
+        return None
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return None
+
+
+def cached_provider_percent(cached: dict[str, Any] | None, provider: str) -> float | None:
+    if not cached:
+        return None
+    percentages = cached.get("percentages")
+    if isinstance(percentages, dict):
+        percent = percentages.get(provider)
+        if isinstance(percent, (int, float)):
+            return float(percent)
+    output = cached.get("output")
+    if isinstance(output, str):
+        return parse_cached_percent(output, provider)
+    return None
+
+
+def cached_provider_state(cached: dict[str, Any] | None, provider: str) -> dict[str, Any]:
+    if not cached:
+        return {}
+    states = cached.get("provider_state")
+    if not isinstance(states, dict):
+        return {}
+    state = states.get(provider)
+    return dict(state) if isinstance(state, dict) else {}
+
+
+def should_skip_provider_fetch(provider: str, previous: dict[str, Any] | None, now: float) -> bool:
+    if cached_provider_percent(previous, provider) is None:
+        return False
+    state = cached_provider_state(previous, provider)
+    next_attempt_at = state.get("next_attempt_at")
+    if isinstance(next_attempt_at, (int, float)) and now < next_attempt_at:
+        return True
+    last_success_at = state.get("last_success_at")
+    if isinstance(last_success_at, (int, float)) and now - last_success_at < provider_ttl_seconds(provider):
+        return True
+    return False
+
+
+def sanitize_log_text(value: str) -> str:
+    replacements = (
+        (re.compile(r"Bearer\s+[^\s,;]+", re.IGNORECASE), "Bearer <redacted>"),
+        (re.compile(r"sk-ant-[A-Za-z0-9_-]+"), "sk-ant-<redacted>"),
+        (re.compile(r"((?:access|refresh|id|api)[_-]?token[\"']?\s*[:=]\s*[\"'])[^\"'\s]+", re.IGNORECASE), r"\1<redacted>"),
+    )
+    for pattern, replacement in replacements:
+        value = pattern.sub(replacement, value)
+    return value[:1000]
+
+
+def trim_log(path: Path) -> None:
+    try:
+        if path.stat().st_size <= LOG_MAX_BYTES:
+            return
+        tail = path.read_bytes()[-LOG_MAX_BYTES // 2 :]
+        path.write_bytes(tail)
+    except OSError:
+        pass
+
+
+def log_provider_failure(provider: str, error: BaseException) -> None:
+    try:
+        path = log_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "provider": provider,
+            "error_type": type(error).__name__,
+            "error": sanitize_log_text(str(error)),
+        }
+        with path.open("a", encoding="utf-8") as handle:
+            json.dump(entry, handle)
+            handle.write("\n")
+        trim_log(path)
+    except OSError:
+        pass
+
+
 def request_json(url: str, headers: dict[str, str], data: dict[str, Any] | None = None) -> dict[str, Any]:
     body = json.dumps(data).encode("utf-8") if data is not None else None
     request = urllib.request.Request(
@@ -147,8 +270,19 @@ def request_json(url: str, headers: dict[str, str], data: dict[str, Any] | None 
         headers=headers,
         method="POST" if data is not None else "GET",
     )
-    with urllib.request.urlopen(request, timeout=timeout_seconds()) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds()) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        response_body = error.read().decode("utf-8", "replace")[:500]
+        retry_after = None
+        retry_after_header = error.headers.get("Retry-After") if error.headers else None
+        if retry_after_header:
+            try:
+                retry_after = int(retry_after_header)
+            except ValueError:
+                retry_after = None
+        raise HTTPUsageError(error.code, url, response_body, retry_after) from error
     if not isinstance(payload, dict):
         raise UsageError(f"{url} returned non-object JSON")
     return payload
@@ -373,14 +507,44 @@ def fetch_claude_weekly_percent() -> float:
 # Status/cache ---------------------------------------------------------------
 
 
-def collect_output() -> str:
-    percentages: list[float | None] = []
-    for fetcher in (fetch_codex_weekly_percent, fetch_claude_weekly_percent):
+def collect_percentages(
+    previous: dict[str, Any] | None = None,
+) -> tuple[dict[str, float | None], dict[str, dict[str, Any]]]:
+    percentages: dict[str, float | None] = {}
+    provider_state: dict[str, dict[str, Any]] = {}
+    for provider, fetcher in (
+        ("codex", fetch_codex_weekly_percent),
+        ("claude", fetch_claude_weekly_percent),
+    ):
+        now = time.time()
+        previous_state = cached_provider_state(previous, provider)
+        if should_skip_provider_fetch(provider, previous, now):
+            percentages[provider] = cached_provider_percent(previous, provider)
+            provider_state[provider] = previous_state
+            continue
         try:
-            percentages.append(fetcher())
-        except (OSError, ValueError, UsageError, urllib.error.URLError, json.JSONDecodeError):
-            percentages.append(None)
-    return render_chain(percentages[0], percentages[1])
+            percentages[provider] = fetcher()
+            provider_state[provider] = {
+                "last_attempt_at": now,
+                "last_success_at": now,
+            }
+        except (OSError, ValueError, UsageError, urllib.error.URLError, json.JSONDecodeError) as error:
+            log_provider_failure(provider, error)
+            percentages[provider] = cached_provider_percent(previous, provider)
+            provider_state[provider] = {
+                **previous_state,
+                "last_attempt_at": now,
+                "last_error_at": now,
+                "next_attempt_at": now + failure_backoff_seconds(error),
+            }
+    return percentages, provider_state
+
+
+def collect_output(
+    previous: dict[str, Any] | None = None,
+) -> tuple[str, dict[str, float | None], dict[str, dict[str, Any]]]:
+    percentages, provider_state = collect_percentages(previous)
+    return render_chain(percentages["codex"], percentages["claude"]), percentages, provider_state
 
 
 def read_cache() -> dict[str, Any] | None:
@@ -394,11 +558,21 @@ def read_cache() -> dict[str, Any] | None:
     return None
 
 
-def write_cache(output: str) -> None:
+def write_cache(
+    output: str,
+    percentages: dict[str, float | None],
+    provider_state: dict[str, dict[str, Any]],
+) -> None:
     path = cache_file()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    data = {"version": CACHE_VERSION, "fetched_at": time.time(), "output": output}
+    data = {
+        "version": CACHE_VERSION,
+        "fetched_at": time.time(),
+        "output": output,
+        "percentages": percentages,
+        "provider_state": provider_state,
+    }
     with tmp.open("w", encoding="utf-8") as handle:
         json.dump(data, handle)
         handle.write("\n")
@@ -442,7 +616,9 @@ def refresh_cache() -> bool:
     if fd is None:
         return False
     try:
-        write_cache(collect_output())
+        previous = read_cache()
+        output, percentages, provider_state = collect_output(previous)
+        write_cache(output, percentages, provider_state)
         return True
     finally:
         release_lock(fd)
