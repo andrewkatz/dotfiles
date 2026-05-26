@@ -1,0 +1,478 @@
+#!/usr/bin/env python3
+"""Print compact Codex and Claude usage-limit progress bars for tmux.
+
+The script reads local auth at runtime, fetches the providers' usage endpoints,
+and caches the rendered status so tmux can call it every few seconds without
+blocking on the network.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+DEFAULT_TTL_SECONDS = 60
+DEFAULT_TIMEOUT_SECONDS = 5
+DEFAULT_BAR_WIDTH = 6
+
+CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
+CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+CLAUDE_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
+CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials"
+
+CACHE_VERSION = 4
+LOCK_MAX_AGE_SECONDS = 120
+TOKEN_REFRESH_SKEW_SECONDS = 60
+PARTIAL_BLOCKS = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"]
+
+
+class UsageError(Exception):
+    """Expected provider/auth/response issue while collecting usage."""
+
+
+def env_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def timeout_seconds() -> int:
+    return env_int("CODEX_USAGE_BARS_TIMEOUT", DEFAULT_TIMEOUT_SECONDS)
+
+
+def bar_width() -> int:
+    return env_int("CODEX_USAGE_BARS_WIDTH", DEFAULT_BAR_WIDTH)
+
+
+def usage_mode() -> str:
+    mode = os.environ.get("CODEX_USAGE_BARS_MODE", "used").casefold()
+    return mode if mode in ("used", "remaining") else "used"
+
+
+def cache_dir() -> Path:
+    base = os.environ.get("XDG_CACHE_HOME")
+    if base:
+        return Path(base)
+    return Path.home() / ".cache"
+
+
+def cache_file() -> Path:
+    override = os.environ.get("CODEX_USAGE_BARS_CACHE")
+    if override:
+        return Path(override).expanduser()
+    return cache_dir() / "codex-usage-bars.json"
+
+
+def lock_file() -> Path:
+    return cache_file().with_suffix(".lock")
+
+
+def codex_auth_file() -> Path:
+    return Path(os.environ.get("CODEX_AUTH_FILE", "~/.codex/auth.json")).expanduser()
+
+
+def codex_usage_url() -> str:
+    return os.environ.get("CODEX_USAGE_BARS_URL", CODEX_USAGE_URL)
+
+
+def claude_usage_url() -> str:
+    return os.environ.get("CLAUDE_USAGE_BARS_URL", CLAUDE_USAGE_URL)
+
+
+def clamp_percent(value: float) -> float:
+    return max(0.0, min(100.0, value))
+
+
+def progress_bar(percent: float, width: int) -> str:
+    width = max(1, width)
+    eighths = round(clamp_percent(percent) * width * 8 / 100)
+    full, partial = divmod(eighths, 8)
+    full = min(full, width)
+    partial_char = PARTIAL_BLOCKS[partial] if full < width else ""
+    empty = max(0, width - full - (1 if partial_char else 0))
+    return "█" * full + partial_char + "·" * empty
+
+
+def format_provider_usage(name: str, used_percent: float | None) -> str:
+    if used_percent is None:
+        return f"{name} --"
+    shown = clamp_percent(100.0 - used_percent if usage_mode() == "remaining" else used_percent)
+    return f"{name} {progress_bar(shown, bar_width())} {shown:.0f}%"
+
+
+def request_json(url: str, headers: dict[str, str], data: dict[str, Any] | None = None) -> dict[str, Any]:
+    body = json.dumps(data).encode("utf-8") if data is not None else None
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers=headers,
+        method="POST" if data is not None else "GET",
+    )
+    with urllib.request.urlopen(request, timeout=timeout_seconds()) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise UsageError(f"{url} returned non-object JSON")
+    return payload
+
+
+# Codex ---------------------------------------------------------------------
+
+
+def select_codex_rate_limit(payload: dict[str, Any]) -> dict[str, Any] | None:
+    selector = os.environ.get("CODEX_USAGE_BARS_LIMIT", "codex").casefold()
+    if selector in ("", "codex", "default"):
+        rate_limit = payload.get("rate_limit")
+        if isinstance(rate_limit, dict):
+            return rate_limit
+
+    for item in payload.get("additional_rate_limits") or []:
+        if not isinstance(item, dict):
+            continue
+        names = [
+            str(item.get("metered_feature") or "").casefold(),
+            str(item.get("limit_name") or "").casefold(),
+        ]
+        if selector in names or selector in " ".join(names):
+            rate_limit = item.get("rate_limit")
+            if isinstance(rate_limit, dict):
+                return rate_limit
+
+    if isinstance(payload.get("rate_limit"), dict):
+        return payload["rate_limit"]
+
+    for item in payload.get("additional_rate_limits") or []:
+        if isinstance(item, dict) and isinstance(item.get("rate_limit"), dict):
+            return item["rate_limit"]
+
+    return None
+
+
+def is_codex_weekly_window(window: dict[str, Any]) -> bool:
+    seconds = window.get("limit_window_seconds")
+    if not isinstance(seconds, (int, float)):
+        return False
+    week = 7 * 24 * 60 * 60
+    return week * 0.95 <= seconds <= week * 1.05
+
+
+def read_codex_auth() -> tuple[str, str | None]:
+    with codex_auth_file().open(encoding="utf-8") as handle:
+        auth = json.load(handle)
+    tokens = auth.get("tokens") or {}
+    access_token = tokens.get("access_token")
+    if not isinstance(access_token, str) or not access_token:
+        raise UsageError("Codex ChatGPT access token is unavailable")
+    account_id = tokens.get("account_id")
+    if not isinstance(account_id, str):
+        account_id = None
+    return access_token, account_id
+
+
+def fetch_codex_weekly_percent() -> float:
+    access_token, account_id = read_codex_auth()
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "User-Agent": "codex-cli",
+    }
+    if account_id:
+        headers["ChatGPT-Account-ID"] = account_id
+
+    payload = request_json(codex_usage_url(), headers)
+    rate_limit = select_codex_rate_limit(payload)
+    if not rate_limit:
+        raise UsageError("Codex usage response did not include rate limits")
+
+    windows = [
+        window
+        for window in (rate_limit.get("primary_window"), rate_limit.get("secondary_window"))
+        if isinstance(window, dict)
+    ]
+    weekly = next((window for window in windows if is_codex_weekly_window(window)), None)
+    if weekly is None:
+        raise UsageError("Codex usage response did not include a weekly window")
+
+    used = weekly.get("used_percent")
+    if not isinstance(used, (int, float)):
+        raise UsageError("Codex weekly window did not include used_percent")
+    return float(used)
+
+
+# Claude --------------------------------------------------------------------
+
+
+def security_output(args: list[str], *, timeout: int = 4) -> str:
+    try:
+        return subprocess.check_output(
+            ["security", *args],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=timeout,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError) as error:
+        raise UsageError(f"security {' '.join(args)} failed") from error
+
+
+def claude_keychain_account() -> str | None:
+    service = os.environ.get("CLAUDE_USAGE_BARS_KEYCHAIN_SERVICE", CLAUDE_KEYCHAIN_SERVICE)
+    try:
+        output = security_output(["find-generic-password", "-s", service])
+    except UsageError:
+        return os.environ.get("USER")
+    match = re.search(r'"acct"<blob>="([^"]+)"', output)
+    if match:
+        return match.group(1)
+    return os.environ.get("USER")
+
+
+def read_claude_oauth() -> tuple[dict[str, Any], dict[str, Any], str | None]:
+    env_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
+    if env_token:
+        return {"claudeAiOauth": {"accessToken": env_token}}, {"accessToken": env_token}, None
+
+    service = os.environ.get("CLAUDE_USAGE_BARS_KEYCHAIN_SERVICE", CLAUDE_KEYCHAIN_SERVICE)
+    raw = security_output(["find-generic-password", "-s", service, "-w"])
+    credentials = json.loads(raw)
+    if not isinstance(credentials, dict):
+        raise UsageError("Claude credentials are not a JSON object")
+    oauth = credentials.get("claudeAiOauth")
+    if not isinstance(oauth, dict):
+        raise UsageError("Claude keychain item did not include claudeAiOauth")
+    return credentials, oauth, claude_keychain_account()
+
+
+def save_claude_oauth(credentials: dict[str, Any], account: str) -> None:
+    service = os.environ.get("CLAUDE_USAGE_BARS_KEYCHAIN_SERVICE", CLAUDE_KEYCHAIN_SERVICE)
+    payload = json.dumps(credentials, separators=(",", ":"))
+    try:
+        subprocess.check_call(
+            ["security", "add-generic-password", "-U", "-s", service, "-a", account, "-w", payload],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=4,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError) as error:
+        raise UsageError("failed to update Claude keychain credentials") from error
+
+
+def refresh_claude_oauth(credentials: dict[str, Any], oauth: dict[str, Any], account: str) -> str:
+    refresh_token = oauth.get("refreshToken")
+    if not isinstance(refresh_token, str) or not refresh_token:
+        raise UsageError("Claude refresh token is unavailable")
+
+    scopes = oauth.get("scopes")
+    data: dict[str, Any] = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": str(oauth.get("clientId") or os.environ.get("CLAUDE_USAGE_BARS_CLIENT_ID") or CLAUDE_CLIENT_ID),
+    }
+    if isinstance(scopes, list) and scopes:
+        data["scope"] = " ".join(str(scope) for scope in scopes)
+
+    response = request_json(
+        os.environ.get("CLAUDE_USAGE_BARS_TOKEN_URL", CLAUDE_TOKEN_URL),
+        {"Content-Type": "application/json", "User-Agent": "claude-code"},
+        data,
+    )
+    access_token = response.get("access_token")
+    new_refresh_token = response.get("refresh_token")
+    if not isinstance(access_token, str) or not isinstance(new_refresh_token, str):
+        raise UsageError("Claude token refresh response did not include tokens")
+
+    new_oauth = dict(oauth)
+    new_oauth["accessToken"] = access_token
+    new_oauth["refreshToken"] = new_refresh_token
+    expires_in = response.get("expires_in")
+    if not isinstance(expires_in, (int, float)):
+        expires_in = 8 * 60 * 60
+    new_oauth["expiresAt"] = int((time.time() + float(expires_in)) * 1000)
+    if isinstance(response.get("scope"), str):
+        new_oauth["scopes"] = response["scope"].split()
+
+    credentials["claudeAiOauth"] = new_oauth
+    save_claude_oauth(credentials, account)
+    return access_token
+
+
+def claude_access_token() -> str:
+    credentials, oauth, account = read_claude_oauth()
+    access_token = oauth.get("accessToken")
+    if not isinstance(access_token, str) or not access_token:
+        raise UsageError("Claude access token is unavailable")
+
+    expires_at = oauth.get("expiresAt")
+    if isinstance(expires_at, (int, float)):
+        expires_at_seconds = float(expires_at) / 1000
+        if expires_at_seconds <= time.time() + TOKEN_REFRESH_SKEW_SECONDS:
+            if not account:
+                raise UsageError("Claude token is expired and keychain account is unknown")
+            return refresh_claude_oauth(credentials, oauth, account)
+
+    return access_token
+
+
+def fetch_claude_weekly_percent() -> float:
+    token = claude_access_token()
+    payload = request_json(
+        claude_usage_url(),
+        {
+            "Accept": "application/json",
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "User-Agent": "claude-code",
+            "anthropic-beta": "oauth-2025-04-20",
+        },
+    )
+    weekly = payload.get("seven_day")
+    if not isinstance(weekly, dict):
+        raise UsageError("Claude usage response did not include seven_day")
+    utilization = weekly.get("utilization")
+    if not isinstance(utilization, (int, float)):
+        raise UsageError("Claude seven_day did not include utilization")
+    return float(utilization)
+
+
+# Status/cache ---------------------------------------------------------------
+
+
+def collect_output() -> str:
+    providers: list[tuple[str, Any]] = [
+        ("Codex", fetch_codex_weekly_percent),
+        ("Claude", fetch_claude_weekly_percent),
+    ]
+    pieces: list[str] = []
+    for name, fetcher in providers:
+        try:
+            percent = fetcher()
+        except (OSError, ValueError, UsageError, urllib.error.URLError, json.JSONDecodeError):
+            percent = None
+        pieces.append(format_provider_usage(name, percent))
+    return " ".join(pieces)
+
+
+def read_cache() -> dict[str, Any] | None:
+    try:
+        with cache_file().open(encoding="utf-8") as handle:
+            cached = json.load(handle)
+        if isinstance(cached, dict) and cached.get("version") == CACHE_VERSION:
+            return cached
+    except (OSError, json.JSONDecodeError):
+        pass
+    return None
+
+
+def write_cache(output: str) -> None:
+    path = cache_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    data = {"version": CACHE_VERSION, "fetched_at": time.time(), "output": output}
+    with tmp.open("w", encoding="utf-8") as handle:
+        json.dump(data, handle)
+        handle.write("\n")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+
+def acquire_lock() -> int | None:
+    path = lock_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        os.write(fd, str(os.getpid()).encode("ascii"))
+        return fd
+    except FileExistsError:
+        try:
+            if time.time() - path.stat().st_mtime > LOCK_MAX_AGE_SECONDS:
+                path.unlink()
+                return acquire_lock()
+        except OSError:
+            return None
+    except OSError:
+        return None
+    return None
+
+
+def release_lock(fd: int | None) -> None:
+    if fd is not None:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    try:
+        lock_file().unlink()
+    except OSError:
+        pass
+
+
+def refresh_cache() -> bool:
+    fd = acquire_lock()
+    if fd is None:
+        return False
+    try:
+        write_cache(collect_output())
+        return True
+    finally:
+        release_lock(fd)
+
+
+def spawn_refresh() -> None:
+    try:
+        subprocess.Popen(
+            [sys.executable, __file__, "--refresh"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError:
+        pass
+
+
+def cached_output_is_fresh(cached: dict[str, Any], ttl: int) -> bool:
+    fetched_at = cached.get("fetched_at")
+    return isinstance(fetched_at, (int, float)) and time.time() - fetched_at < ttl
+
+
+def print_status() -> int:
+    cached = read_cache()
+    ttl = env_int("CODEX_USAGE_BARS_TTL", DEFAULT_TTL_SECONDS)
+
+    if cached and isinstance(cached.get("output"), str):
+        if cached_output_is_fresh(cached, ttl):
+            print(cached["output"])
+        else:
+            spawn_refresh()
+            print(cached["output"])
+        return 0
+
+    if refresh_cache():
+        refreshed = read_cache()
+        if refreshed and isinstance(refreshed.get("output"), str):
+            print(refreshed["output"])
+            return 0
+
+    spawn_refresh()
+    print("Codex -- Claude --")
+    return 0
+
+
+def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "--refresh":
+        return 0 if refresh_cache() else 1
+    return print_status()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

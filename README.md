@@ -32,9 +32,9 @@ On a fresh machine, `bin/install` can decrypt machine secrets after an age key i
 - `bin/migrate-from-1password` — one-shot migration from a 1Password item to the private sops repo.
 - `bin/update` — update packages (brew/yay/paru) and nvim plugins.
 
-## tmux Developerly widgets
+## tmux Codex / Developerly widgets
 
-The tmux status bar delegates local LLM usage and agent activity to Developerly:
+The tmux status bar shows Codex limit usage and Developerly agent activity:
 
-- `developerly usage show-compact` — compact token usage widget.
+- `codex-usage-bars` — compact Codex and Claude weekly usage-limit progress bars.
 - `developerly status` — agent activity summary.
