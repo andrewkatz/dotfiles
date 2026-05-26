@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Print compact Codex and Claude usage-limit progress bars for tmux.
+"""Print rectangular Codex and Claude usage pills for tmux.
 
 The script reads local auth at runtime, fetches the providers' usage endpoints,
 and caches the rendered status so tmux can call it every few seconds without
-blocking on the network.
+blocking on the network. Each pill sets its own background; downstream tmux
+segments continue the chain by setting the next background directly.
 """
 
 from __future__ import annotations
@@ -21,7 +22,6 @@ from typing import Any
 
 DEFAULT_TTL_SECONDS = 60
 DEFAULT_TIMEOUT_SECONDS = 5
-DEFAULT_BAR_WIDTH = 6
 
 CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
@@ -29,10 +29,21 @@ CLAUDE_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials"
 
-CACHE_VERSION = 4
+CACHE_VERSION = 5
 LOCK_MAX_AGE_SECONDS = 120
 TOKEN_REFRESH_SKEW_SECONDS = 60
-PARTIAL_BLOCKS = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"]
+
+# Pill styling. Background colors fade darker -> lighter L->R and must stay in
+# sync with the agent/session pills configured in tmux.conf.
+PILL_BG_CODEX = "#1e293b"
+PILL_BG_CLAUDE = "#334155"
+PILL_FG_CODEX_LABEL = "#94a3b8"
+PILL_FG_CLAUDE_LABEL = "#cbd5e1"
+PILL_FG_VALUE = "#f1f5f9"
+PILL_FG_WARN = "#fbbf24"
+PILL_FG_DANGER = "#f87171"
+CODEX_ICON = "\U000f06a9"  # nf-md-robot
+CLAUDE_ICON = "✦"     # Black Four Pointed Star — plain Unicode, always renders
 
 
 class UsageError(Exception):
@@ -51,10 +62,6 @@ def env_int(name: str, default: int) -> int:
 
 def timeout_seconds() -> int:
     return env_int("CODEX_USAGE_BARS_TIMEOUT", DEFAULT_TIMEOUT_SECONDS)
-
-
-def bar_width() -> int:
-    return env_int("CODEX_USAGE_BARS_WIDTH", DEFAULT_BAR_WIDTH)
 
 
 def usage_mode() -> str:
@@ -96,21 +103,40 @@ def clamp_percent(value: float) -> float:
     return max(0.0, min(100.0, value))
 
 
-def progress_bar(percent: float, width: int) -> str:
-    width = max(1, width)
-    eighths = round(clamp_percent(percent) * width * 8 / 100)
-    full, partial = divmod(eighths, 8)
-    full = min(full, width)
-    partial_char = PARTIAL_BLOCKS[partial] if full < width else ""
-    empty = max(0, width - full - (1 if partial_char else 0))
-    return "█" * full + partial_char + "·" * empty
-
-
-def format_provider_usage(name: str, used_percent: float | None) -> str:
+def displayed_percent(used_percent: float | None) -> float | None:
     if used_percent is None:
-        return f"{name} --"
-    shown = clamp_percent(100.0 - used_percent if usage_mode() == "remaining" else used_percent)
-    return f"{name} {progress_bar(shown, bar_width())} {shown:.0f}%"
+        return None
+    return clamp_percent(100.0 - used_percent if usage_mode() == "remaining" else used_percent)
+
+
+def severity_color(percent: float, default: str) -> str:
+    if percent >= 85:
+        return PILL_FG_DANGER
+    if percent >= 65:
+        return PILL_FG_WARN
+    return default
+
+
+def render_pill(bg: str, label_fg: str, icon: str, label: str, percent: float | None) -> str:
+    shown = displayed_percent(percent)
+    if shown is None:
+        value_str = "—"
+        value_fg = label_fg
+    else:
+        value_str = f"{shown:.0f}%"
+        value_fg = severity_color(shown, PILL_FG_VALUE)
+    return (
+        f"#[bg={bg},fg={label_fg}] {icon} {label} "
+        f"#[fg={value_fg}]{value_str}"
+        f"#[fg={label_fg}] "
+    )
+
+
+def render_chain(codex_percent: float | None, claude_percent: float | None) -> str:
+    return "".join((
+        render_pill(PILL_BG_CODEX, PILL_FG_CODEX_LABEL, CODEX_ICON, "codex", codex_percent),
+        render_pill(PILL_BG_CLAUDE, PILL_FG_CLAUDE_LABEL, CLAUDE_ICON, "claude", claude_percent),
+    ))
 
 
 def request_json(url: str, headers: dict[str, str], data: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -348,18 +374,13 @@ def fetch_claude_weekly_percent() -> float:
 
 
 def collect_output() -> str:
-    providers: list[tuple[str, Any]] = [
-        ("Codex", fetch_codex_weekly_percent),
-        ("Claude", fetch_claude_weekly_percent),
-    ]
-    pieces: list[str] = []
-    for name, fetcher in providers:
+    percentages: list[float | None] = []
+    for fetcher in (fetch_codex_weekly_percent, fetch_claude_weekly_percent):
         try:
-            percent = fetcher()
+            percentages.append(fetcher())
         except (OSError, ValueError, UsageError, urllib.error.URLError, json.JSONDecodeError):
-            percent = None
-        pieces.append(format_provider_usage(name, percent))
-    return " ".join(pieces)
+            percentages.append(None)
+    return render_chain(percentages[0], percentages[1])
 
 
 def read_cache() -> dict[str, Any] | None:
@@ -464,7 +485,7 @@ def print_status() -> int:
             return 0
 
     spawn_refresh()
-    print("Codex -- Claude --")
+    print(render_chain(None, None))
     return 0
 
 
