@@ -13,6 +13,9 @@ dot-claude/*
 !dot-claude/settings.json
 !dot-claude/keybindings.json
 !dot-claude/dot-mcp.json
+!dot-claude/commands
+dot-claude/commands/*
+!dot-claude/commands/*.md
 !dot-claude/hooks
 !dot-claude/hooks/*
 
