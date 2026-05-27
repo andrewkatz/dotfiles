@@ -38,15 +38,16 @@ LOCK_MAX_AGE_SECONDS = 120
 TOKEN_REFRESH_SKEW_SECONDS = 60
 LOG_MAX_BYTES = 256 * 1024
 
-# Pill styling. Background colors fade darker -> lighter L->R and must stay in
-# sync with the agent/session pills configured in tmux.conf.
-PILL_BG_CODEX = "#1e293b"
-PILL_BG_CLAUDE = "#334155"
-PILL_FG_CODEX_LABEL = "#94a3b8"
-PILL_FG_CLAUDE_LABEL = "#cbd5e1"
-PILL_FG_VALUE = "#f1f5f9"
-PILL_FG_WARN = "#fbbf24"
-PILL_FG_DANGER = "#f87171"
+# Pill styling uses the Carbonfox palette from
+# dot-config/ghostty/themes/carbonfox. Background colors fade darker -> lighter
+# L->R; tmux.conf continues the chain with agent #484848 and session #82a8f8.
+PILL_BG_CODEX = "#282828"
+PILL_BG_CLAUDE = "#2a2a2a"
+PILL_FG_CODEX_LABEL = "#82a8f8"
+PILL_FG_CLAUDE_LABEL = "#b897f8"
+PILL_FG_VALUE = "#f2f4f8"
+PILL_FG_WARN = "#56bab9"
+PILL_FG_DANGER = "#dc5e95"
 CODEX_ICON = "\ue795"
 CLAUDE_ICON = "\U000f06a9"  # nf-md-robot
 
