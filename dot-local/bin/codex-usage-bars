@@ -40,7 +40,7 @@ LOG_MAX_BYTES = 256 * 1024
 
 # Pill styling uses the Carbonfox palette from
 # dot-config/ghostty/themes/carbonfox. Background colors fade darker -> lighter
-# L->R; tmux.conf continues the chain with agent #484848 and session #82a8f8.
+# L->R; tmux.conf continues the chain with agent #56bab9 and session #484848.
 PILL_BG_CODEX = "#282828"
 PILL_BG_CLAUDE = "#2a2a2a"
 PILL_FG_CODEX_LABEL = "#82a8f8"
