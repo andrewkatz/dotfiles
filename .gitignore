@@ -12,12 +12,15 @@ dot-claude/*
 !dot-claude/CLAUDE.md
 !dot-claude/settings.json
 !dot-claude/keybindings.json
-!dot-claude/dot-mcp.json
 !dot-claude/commands
 dot-claude/commands/*
 !dot-claude/commands/*.md
 !dot-claude/hooks
 !dot-claude/hooks/*
+!dot-claude/skills
+dot-claude/skills/*
+!dot-claude/skills/*/
+!dot-claude/skills/*/SKILL.md
 
 # dot-pi: only track these (no caches/auth/sessions)
 dot-pi/*

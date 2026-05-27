@@ -377,6 +377,37 @@ install_pi_dev() {
   PATH="$node_dir/bin:$PATH" npm install -g --prefix="$pi_prefix" --silent "$pi_package"
 }
 
+configure_claude_mcp() {
+  local firecrawl_command="$HOME/.local/bin/claude-firecrawl-mcp"
+  local get_output
+
+  if [ -z "$(command -v claude)" ]; then
+    log "claude not found; skipping Claude MCP setup."
+    return 0
+  fi
+
+  if [ ! -x "$firecrawl_command" ]; then
+    log_error "Missing $firecrawl_command; skipping Claude Firecrawl MCP setup."
+    return 0
+  fi
+
+  if get_output="$(claude mcp get firecrawl 2>/dev/null)"; then
+    if printf '%s\n' "$get_output" | grep -Fq "Command: $firecrawl_command"; then
+      log "Claude Firecrawl MCP server already configured."
+      return 0
+    fi
+
+    log "Updating Claude Firecrawl MCP server to use $firecrawl_command..."
+    claude mcp remove firecrawl -s user >/dev/null || true
+  else
+    log "Registering Claude Firecrawl MCP server..."
+  fi
+
+  if ! claude mcp add --scope user firecrawl -- "$firecrawl_command" >/dev/null; then
+    log_error "Failed to register Claude Firecrawl MCP server."
+  fi
+}
+
 install_developerly() {
   if [ -z "$(command -v developerly)" ]; then
     log "developerly not found, installing..."
@@ -442,6 +473,7 @@ run_stow
 install_packages
 install_tpm_plugins
 install_pi_dev
+configure_claude_mcp
 install_developerly
 
 # install_secrets uses sops + age (see bin/ss). On a fresh box without an

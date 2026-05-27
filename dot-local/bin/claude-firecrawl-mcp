@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [ -f "$HOME/.zsh_secrets" ]; then
+  set +u
+  # shellcheck source=/dev/null
+  source "$HOME/.zsh_secrets"
+  set -u
+fi
+
+if [ -z "${FIRECRAWL_API_KEY:-}" ] && [ -z "${FIRECRAWL_API_URL:-}" ]; then
+  echo "Either FIRECRAWL_API_KEY or FIRECRAWL_API_URL must be set. For Firecrawl Cloud, set FIRECRAWL_API_KEY in ~/.zsh_secrets or the Claude environment." >&2
+  exit 1
+fi
+
+env_args=(
+  "HOME=$HOME"
+  "PATH=$PATH"
+  "USER=${USER:-}"
+  "LOGNAME=${LOGNAME:-${USER:-}}"
+  "SHELL=${SHELL:-/bin/sh}"
+  "TMPDIR=${TMPDIR:-/tmp}"
+)
+
+while IFS= read -r name; do
+  env_args+=("$name=${!name}")
+done < <(compgen -v FIRECRAWL_)
+
+exec env -i "${env_args[@]}" npx -y firecrawl-mcp "$@"
