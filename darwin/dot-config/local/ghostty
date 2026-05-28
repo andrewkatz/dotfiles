@@ -1,2 +1,3 @@
 font-size = 15
-macos-titlebar-style = transparent
+macos-titlebar-style = hidden
+window-padding-y = 8,2
