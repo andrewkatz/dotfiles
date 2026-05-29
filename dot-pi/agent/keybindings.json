@@ -1,3 +1,4 @@
 {
-  "app.editor.external": []
+  "app.editor.external": [],
+  "tui.input.newLine": ["shift+enter", "ctrl+n"]
 }
