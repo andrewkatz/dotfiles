@@ -1,1 +1,4 @@
 skip-commit-generation-prompt = true
+
+[[pre-switch]]
+fetch = "git fetch origin --prune"

@@ -3,3 +3,5 @@
 .bin/
 .envrc
 .nvim.lua
+
+**/.claude/settings.local.json
