@@ -132,11 +132,37 @@ function tm() {
 }
 
 # ssh shortcuts (work)
-alias ssh_core='ssh -i ~/.ssh/liz/portal-dev-or.pem ubuntu@54.70.173.252'
-alias ssh_lg_api='ssh -i ~/.ssh/liz/portal-dev-or.pem ubuntu@44.232.21.7'
-alias ssh_whitelabel='ssh -i ~/.ssh/liz/portal-dev-or.pem ubuntu@44.232.205.154'
-alias ssh_data_tunnel='ssh ubuntu@data.giantpartners.com'
-alias ssh_sftp='ssh -i ~/.ssh/liz/portal-dev-or.pem ubuntu@34.209.57.22'
+# Targets and key paths live in ~/.zsh_secrets, generated from the private sops repo.
+# Expected vars: WORK_SSH_KEY plus WORK_SSH_*_TARGET values like user@host.
+_work_ssh() {
+  local target_var="$1"
+  local key_var="$2"
+  shift 2
+
+  local target="${(P)target_var}"
+  local key=""
+  if [[ -n "$key_var" ]]; then
+    key="${(P)key_var}"
+  fi
+
+  if [[ -z "$target" ]]; then
+    echo "Set $target_var in ~/.zsh_secrets (run bin/ss after updating sops secrets)." >&2
+    return 1
+  fi
+
+  local -a ssh_args
+  if [[ -n "$key" ]]; then
+    ssh_args+=(-i "$key")
+  fi
+
+  ssh "${ssh_args[@]}" "$target" "$@"
+}
+
+ssh_core() { _work_ssh WORK_SSH_CORE_TARGET WORK_SSH_KEY "$@"; }
+ssh_lg_api() { _work_ssh WORK_SSH_LG_API_TARGET WORK_SSH_KEY "$@"; }
+ssh_whitelabel() { _work_ssh WORK_SSH_WHITELABEL_TARGET WORK_SSH_KEY "$@"; }
+ssh_data_tunnel() { _work_ssh WORK_SSH_DATA_TUNNEL_TARGET "" "$@"; }
+ssh_sftp() { _work_ssh WORK_SSH_SFTP_TARGET WORK_SSH_KEY "$@"; }
 
 # VPN switching
 es() {
@@ -165,8 +191,8 @@ ed() {
 
 # AI
 alias crush='crush --yolo'
-alias c="claude --model 'opus' --effort 'xhigh' --dangerously-skip-permissions"
-alias cx="claude --allow-dangerously-skip-permissions --permission-mode plan --effort 'xhigh' --model 'opus'"
+alias c="claude --model 'opus' --dangerously-skip-permissions"
+alias cx="claude --allow-dangerously-skip-permissions --permission-mode plan --model 'opus'"
 alias g='goose'
 alias gr='goose session -r'
 

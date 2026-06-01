@@ -26,6 +26,23 @@ andrew-mac:
   EXAMPLE_MACHINE_VALUE: "..."
 ```
 
+Common values used by these dotfiles include:
+
+```yaml
+common:
+  # Grafana Claude skill
+  GRAFANA_URL: "https://grafana.example.com"
+  GRAFANA_TOKEN: "glsa_..."
+
+  # Work SSH helper aliases in dot-zsh/aliases.zsh
+  WORK_SSH_KEY: "$HOME/.ssh/work/id_ed25519"
+  WORK_SSH_CORE_TARGET: "user@host.example.com"
+  WORK_SSH_LG_API_TARGET: "user@host.example.com"
+  WORK_SSH_WHITELABEL_TARGET: "user@host.example.com"
+  WORK_SSH_DATA_TUNNEL_TARGET: "user@host.example.com"
+  WORK_SSH_SFTP_TARGET: "user@host.example.com"
+```
+
 ## First-time setup
 
 1. Generate an age key:
