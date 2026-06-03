@@ -1,0 +1,169 @@
+# Rift window manager config
+# Mirrors the AeroSpace/Hyprland window-management hotkeys in this dotfiles repo.
+
+[settings]
+animate = true
+animation_duration = 0.2
+animation_fps = 100.0
+
+# AeroSpace uses Alt+Z for workspace Z, so manage spaces by default instead of
+# requiring Rift's default Alt+Z activation toggle.
+default_disable = false
+
+focus_follows_mouse = true
+mouse_follows_focus = true
+mouse_hides_on_focus = true
+auto_focus_blacklist = []
+run_on_start = []
+hot_reload = true
+
+[settings.layout]
+mode = "traditional"
+
+[settings.layout.gaps.outer]
+# macOS already excludes the menu bar from Rift's usable display frame, so no
+# extra top gap is needed when SketchyBar is not running.
+top = 0
+left = 10
+bottom = 10
+right = 10
+
+[settings.layout.gaps.inner]
+horizontal = 10
+vertical = 10
+
+[settings.ui.menu_bar]
+enabled = true
+show_empty = false
+mode = "active"
+active_label = "name"
+display_style = "label"
+
+[settings.ui.mission_control]
+enabled = false
+fade_enabled = false
+fade_duration_ms = 180.0
+
+[settings.gestures]
+enabled = true
+invert_horizontal_swipe = false
+skip_empty = true
+fingers = 3
+distance_pct = 0.08
+haptics_enabled = true
+haptic_pattern = "level_change"
+
+[virtual_workspaces]
+enabled = true
+default_workspace_count = 26
+auto_assign_windows = true
+preserve_focus_per_workspace = true
+workspace_auto_back_and_forth = false
+default_workspace = 0
+workspace_names = ["1", "2", "3", "4", "5", "6", "A", "B", "C", "D", "E", "G", "I", "M", "N", "O", "P", "Q", "R", "S", "U", "V", "W", "X", "Y", "Z"]
+reapply_app_rules_on_title_change = false
+
+[[virtual_workspaces.app_rules]]
+app_id = "app.tuple.app"
+workspace = "P"
+
+[[virtual_workspaces.app_rules]]
+app_id = "com.1password.1password"
+floating = true
+
+[[virtual_workspaces.app_rules]]
+app_id = "com.mitchellh.ghostty"
+floating = false
+
+[keys]
+# Layout: matches AeroSpace Alt+/ and Alt+,.
+"Alt + Slash" = "toggle_orientation"
+"Alt + Comma" = "toggle_stack"
+
+# Focus: Alt+h/j/k/l.
+"Alt + H" = { move_focus = "left" }
+"Alt + J" = { move_focus = "down" }
+"Alt + K" = { move_focus = "up" }
+"Alt + L" = { move_focus = "right" }
+
+# Move windows: Alt+Shift+h/j/k/l.
+"Alt + Shift + H" = { move_node = "left" }
+"Alt + Shift + J" = { move_node = "down" }
+"Alt + Shift + K" = { move_node = "up" }
+"Alt + Shift + L" = { move_node = "right" }
+
+# Resize: Alt+Shift+-/=.
+"Alt + Shift + Minus" = "resize_window_shrink"
+"Alt + Shift + Equal" = "resize_window_grow"
+
+# Workspace switching: Alt+[workspace], matching AeroSpace labels.
+"Alt + 1" = { switch_to_workspace = 0 }
+"Alt + 2" = { switch_to_workspace = 1 }
+"Alt + 3" = { switch_to_workspace = 2 }
+"Alt + 4" = { switch_to_workspace = 3 }
+"Alt + 5" = { switch_to_workspace = 4 }
+"Alt + 6" = { switch_to_workspace = 5 }
+"Alt + A" = { switch_to_workspace = 6 }
+"Alt + B" = { switch_to_workspace = 7 }
+"Alt + C" = { switch_to_workspace = 8 }
+"Alt + D" = { switch_to_workspace = 9 }
+"Alt + E" = { switch_to_workspace = 10 }
+"Alt + G" = { switch_to_workspace = 11 }
+"Alt + I" = { switch_to_workspace = 12 }
+"Alt + M" = { switch_to_workspace = 13 }
+"Alt + N" = { switch_to_workspace = 14 }
+"Alt + O" = { switch_to_workspace = 15 }
+"Alt + P" = { switch_to_workspace = 16 }
+"Alt + Q" = { switch_to_workspace = 17 }
+"Alt + R" = { switch_to_workspace = 18 }
+"Alt + S" = { switch_to_workspace = 19 }
+"Alt + U" = { switch_to_workspace = 20 }
+"Alt + V" = { switch_to_workspace = 21 }
+"Alt + W" = { switch_to_workspace = 22 }
+"Alt + X" = { switch_to_workspace = 23 }
+"Alt + Y" = { switch_to_workspace = 24 }
+"Alt + Z" = { switch_to_workspace = 25 }
+
+# Move window to workspace and follow it, matching AeroSpace's
+# move-node-to-workspace --focus-follows-window behavior.
+"Alt + Shift + 1" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "0"] }
+"Alt + Shift + 2" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "1"] }
+"Alt + Shift + 3" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "2"] }
+"Alt + Shift + 4" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "3"] }
+"Alt + Shift + 5" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "4"] }
+"Alt + Shift + 6" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "5"] }
+"Alt + Shift + A" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "6"] }
+"Alt + Shift + B" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "7"] }
+"Alt + Shift + C" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "8"] }
+"Alt + Shift + D" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "9"] }
+"Alt + Shift + E" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "10"] }
+"Alt + Shift + G" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "11"] }
+"Alt + Shift + I" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "12"] }
+"Alt + Shift + M" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "13"] }
+"Alt + Shift + N" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "14"] }
+"Alt + Shift + O" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "15"] }
+"Alt + Shift + P" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "16"] }
+"Alt + Shift + Q" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "17"] }
+"Alt + Shift + R" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "18"] }
+"Alt + Shift + S" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "19"] }
+"Alt + Shift + U" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "20"] }
+"Alt + Shift + V" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "21"] }
+"Alt + Shift + W" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "22"] }
+"Alt + Shift + X" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "23"] }
+"Alt + Shift + Y" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "24"] }
+"Alt + Shift + Z" = { exec = ["/Users/andrewkatz/.config/rift/scripts/move-window-to-workspace-and-follow", "25"] }
+
+# Workspace back-and-forth.
+"Alt + Tab" = "switch_to_last_workspace"
+
+# App/window actions.
+"Alt + Enter" = { exec = ["/usr/bin/osascript", "-e", "tell application \"Brave Browser\" to make new window", "-e", "tell application \"Brave Browser\" to activate"] }
+"Alt + Shift + F" = "toggle_fullscreen"
+"Alt + Shift + Space" = "toggle_window_floating"
+
+# Rift controls that avoid AeroSpace workspace-key conflicts.
+"Alt + Ctrl + Z" = "toggle_space_activated"
+"Alt + Ctrl + R" = { exec = ["/opt/homebrew/bin/rift-cli", "execute", "config", "reload"] }
+"Alt + Ctrl + D" = "debug"
+"Alt + Ctrl + S" = "serialize"
+"Alt + Ctrl + Q" = "save_and_exit"

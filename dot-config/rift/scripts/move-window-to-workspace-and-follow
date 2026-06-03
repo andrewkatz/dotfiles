@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+workspace="${1:?workspace index required}"
+
+rift_cli="${RIFT_CLI:-/opt/homebrew/bin/rift-cli}"
+if [[ ! -x "$rift_cli" ]]; then
+  rift_cli="$(command -v rift-cli)"
+fi
+
+"$rift_cli" execute workspace move-window "$workspace"
+"$rift_cli" execute workspace switch "$workspace"
