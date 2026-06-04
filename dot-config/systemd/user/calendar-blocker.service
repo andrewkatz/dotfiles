@@ -1,0 +1,7 @@
+[Unit]
+Description=Sync flagged personal calendar events to work calendar busy blocks
+Documentation=file:%h/.config/scripts/calendar-blocker/README.md
+
+[Service]
+Type=oneshot
+ExecStart=%h/.config/scripts/calendar-blocker/sync --env %h/.config/calendar-blocker.env

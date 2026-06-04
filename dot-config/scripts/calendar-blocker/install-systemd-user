@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+env_path="${CALENDAR_BLOCKER_ENV:-$HOME/.config/calendar-blocker.env}"
+example_env="$HOME/.config/scripts/calendar-blocker/env.example"
+script_path="$HOME/.config/scripts/calendar-blocker/sync"
+unit="calendar-blocker.timer"
+
+uninstall() {
+  systemctl --user disable --now "$unit" 2>/dev/null || true
+  systemctl --user daemon-reload
+  echo "Uninstalled $unit"
+}
+
+if [[ "${1:-}" == "--uninstall" ]]; then
+  uninstall
+  exit 0
+fi
+
+mkdir -p "$(dirname "$env_path")" "$HOME/.config/calendar-blocker"
+
+if [[ ! -f "$env_path" ]]; then
+  cp "$example_env" "$env_path"
+  chmod 600 "$env_path"
+  cat <<MESSAGE
+Created $env_path from $example_env.
+
+Next steps:
+  1. Save a Google OAuth Desktop client JSON to:
+       $HOME/.config/calendar-blocker/client_secret.json
+  2. Authorize and list calendars:
+       $script_path --env "$env_path" --authorize source
+       $script_path --env "$env_path" --list-calendars source
+       $script_path --env "$env_path" --authorize target
+       $script_path --env "$env_path" --list-calendars target
+  3. Fill CALENDAR_BLOCKER_SOURCE_CALENDAR_ID and CALENDAR_BLOCKER_TARGET_CALENDAR_ID.
+  4. Rerun:
+       ~/.config/scripts/calendar-blocker/install-systemd-user
+MESSAGE
+  exit 1
+fi
+
+# shellcheck source=/dev/null
+set -a
+source "$env_path"
+set +a
+
+missing=()
+[[ -n "${CALENDAR_BLOCKER_SOURCE_CALENDAR_ID:-}" ]] || missing+=("CALENDAR_BLOCKER_SOURCE_CALENDAR_ID")
+[[ -n "${CALENDAR_BLOCKER_TARGET_CALENDAR_ID:-}" ]] || missing+=("CALENDAR_BLOCKER_TARGET_CALENDAR_ID")
+[[ -f "${CALENDAR_BLOCKER_CLIENT_SECRET_FILE:-$HOME/.config/calendar-blocker/client_secret.json}" ]] || missing+=("CALENDAR_BLOCKER_CLIENT_SECRET_FILE")
+[[ -f "${CALENDAR_BLOCKER_SOURCE_TOKEN_FILE:-$HOME/.config/calendar-blocker/source-token.json}" ]] || missing+=("CALENDAR_BLOCKER_SOURCE_TOKEN_FILE")
+[[ -f "${CALENDAR_BLOCKER_TARGET_TOKEN_FILE:-$HOME/.config/calendar-blocker/target-token.json}" ]] || missing+=("CALENDAR_BLOCKER_TARGET_TOKEN_FILE")
+
+if (( ${#missing[@]} > 0 )); then
+  printf 'Update %s before installing; missing: %s\n' "$env_path" "${missing[*]}" >&2
+  exit 1
+fi
+
+systemctl --user daemon-reload
+systemctl --user enable --now "$unit"
+
+cat <<MESSAGE
+Installed $unit.
+It will run every five minutes.
+
+Config: $env_path
+Logs:   journalctl --user -u calendar-blocker.service
+
+Manual dry-run:
+  $script_path --env "$env_path" --dry-run
+
+Uninstall:
+  ~/.config/scripts/calendar-blocker/install-systemd-user --uninstall
+MESSAGE

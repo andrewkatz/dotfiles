@@ -1,0 +1,775 @@
+#!/usr/bin/env python3
+"""Block a work Google Calendar from flagged personal calendar events.
+
+Events on the source calendar whose summary starts with CALENDAR_BLOCKER_TITLE_PREFIX
+(default: "Andrew -") are mirrored to the target calendar as generic "Busy" events.
+The mirrored events are tagged with private Google Calendar extended properties so this
+script can update/delete only the events it owns.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import fcntl
+import http.server
+import json
+import os
+import secrets
+import shlex
+import sys
+import time
+import traceback
+import urllib.error
+import urllib.parse
+import urllib.request
+import webbrowser
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+APP_NAME = "calendar-blocker"
+DEFAULT_ENV_FILE = "~/.config/calendar-blocker.env"
+DEFAULT_CLIENT_SECRET_FILE = "~/.config/calendar-blocker/client_secret.json"
+DEFAULT_SOURCE_TOKEN_FILE = "~/.config/calendar-blocker/source-token.json"
+DEFAULT_TARGET_TOKEN_FILE = "~/.config/calendar-blocker/target-token.json"
+DEFAULT_LOCK_FILE = "/tmp/calendar-blocker.lock"
+DEFAULT_TITLE_PREFIX = "Andrew -"
+DEFAULT_TITLE_CONTAINS_MARKERS = "▫️"
+DEFAULT_TARGET_SUMMARY = "Unavailable"
+DEFAULT_WINDOW_PAST_DAYS = 2
+DEFAULT_WINDOW_FUTURE_DAYS = 180
+DEFAULT_BUFFER_BEFORE_MINUTES = 30
+DEFAULT_BUFFER_AFTER_MINUTES = 30
+GOOGLE_API_BASE = "https://www.googleapis.com/calendar/v3"
+GOOGLE_AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
+GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar"
+MANAGED_KEY = "calendar_blocker_managed"
+SOURCE_CALENDAR_KEY = "calendar_blocker_source_calendar_id"
+SOURCE_EVENT_KEY = "calendar_blocker_source_event_id"
+SOURCE_ICAL_KEY = "calendar_blocker_source_ical_uid"
+SOURCE_UPDATED_KEY = "calendar_blocker_source_updated"
+BUFFER_BEFORE_KEY = "calendar_blocker_buffer_before_minutes"
+BUFFER_AFTER_KEY = "calendar_blocker_buffer_after_minutes"
+
+
+class CalendarBlockerError(Exception):
+    """User-actionable calendar-blocker failure."""
+
+
+class GoogleApiError(CalendarBlockerError):
+    """Google API returned an error."""
+
+    def __init__(self, method: str, url: str, status: int, body: str):
+        self.method = method
+        self.url = url
+        self.status = status
+        self.body = body
+        super().__init__(f"Google API {method} {url} failed with HTTP {status}: {body[:1000]}")
+
+
+@dataclass(frozen=True)
+class OAuthClientInfo:
+    client_id: str
+    client_secret: str
+    auth_uri: str
+    token_uri: str
+
+
+@dataclass(frozen=True)
+class Config:
+    source_calendar_id: str
+    target_calendar_id: str
+    title_prefix: str
+    title_contains_markers: tuple[str, ...]
+    target_summary: str
+    target_description: str
+    target_visibility: str
+    target_color_id: str
+    window_past_days: int
+    window_future_days: int
+    buffer_before_minutes: int
+    buffer_after_minutes: int
+    client_secret_file: Path
+    source_token_file: Path
+    target_token_file: Path
+    lock_file: Path
+    send_updates: str
+
+
+def log(level: str, message: str) -> None:
+    timestamp = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    print(f"{timestamp} {level:<5} {message}", flush=True)
+
+
+def parse_env_file(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+
+    values: dict[str, str] = {}
+    for raw_line in path.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        if "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+
+        try:
+            parsed = shlex.split(value, posix=True)
+            values[key] = parsed[0] if parsed else ""
+        except ValueError:
+            values[key] = value.strip('"').strip("'")
+    return values
+
+
+def expand_path(value: str) -> Path:
+    return Path(os.path.expandvars(os.path.expanduser(value)))
+
+
+def parse_int(value: str, key: str) -> int:
+    try:
+        return int(value)
+    except ValueError as error:
+        raise CalendarBlockerError(f"{key} must be an integer, got {value!r}") from error
+
+
+def parse_marker_list(value: str) -> tuple[str, ...]:
+    return tuple(marker.strip() for marker in value.split(",") if marker.strip())
+
+
+def load_config(args: argparse.Namespace) -> Config:
+    env_path = expand_path(args.env)
+    env = parse_env_file(env_path)
+
+    def get(key: str, default: str = "") -> str:
+        cli_value = getattr(args, key.lower(), None)
+        if cli_value not in (None, ""):
+            return str(cli_value)
+        return env.get(key, os.environ.get(key, default))
+
+    return Config(
+        source_calendar_id=get("CALENDAR_BLOCKER_SOURCE_CALENDAR_ID"),
+        target_calendar_id=get("CALENDAR_BLOCKER_TARGET_CALENDAR_ID"),
+        title_prefix=get("CALENDAR_BLOCKER_TITLE_PREFIX", DEFAULT_TITLE_PREFIX),
+        title_contains_markers=parse_marker_list(get("CALENDAR_BLOCKER_TITLE_CONTAINS_MARKERS", DEFAULT_TITLE_CONTAINS_MARKERS)),
+        target_summary=get("CALENDAR_BLOCKER_TARGET_SUMMARY", DEFAULT_TARGET_SUMMARY),
+        target_description=get(
+            "CALENDAR_BLOCKER_TARGET_DESCRIPTION",
+            "Managed by calendar-blocker. Source event details intentionally omitted.",
+        ),
+        target_visibility=get("CALENDAR_BLOCKER_TARGET_VISIBILITY", "private"),
+        target_color_id=get("CALENDAR_BLOCKER_TARGET_COLOR_ID"),
+        window_past_days=parse_int(get("CALENDAR_BLOCKER_WINDOW_PAST_DAYS", str(DEFAULT_WINDOW_PAST_DAYS)), "CALENDAR_BLOCKER_WINDOW_PAST_DAYS"),
+        window_future_days=parse_int(get("CALENDAR_BLOCKER_WINDOW_FUTURE_DAYS", str(DEFAULT_WINDOW_FUTURE_DAYS)), "CALENDAR_BLOCKER_WINDOW_FUTURE_DAYS"),
+        buffer_before_minutes=parse_int(get("CALENDAR_BLOCKER_BUFFER_BEFORE_MINUTES", str(DEFAULT_BUFFER_BEFORE_MINUTES)), "CALENDAR_BLOCKER_BUFFER_BEFORE_MINUTES"),
+        buffer_after_minutes=parse_int(get("CALENDAR_BLOCKER_BUFFER_AFTER_MINUTES", str(DEFAULT_BUFFER_AFTER_MINUTES)), "CALENDAR_BLOCKER_BUFFER_AFTER_MINUTES"),
+        client_secret_file=expand_path(get("CALENDAR_BLOCKER_CLIENT_SECRET_FILE", DEFAULT_CLIENT_SECRET_FILE)),
+        source_token_file=expand_path(get("CALENDAR_BLOCKER_SOURCE_TOKEN_FILE", DEFAULT_SOURCE_TOKEN_FILE)),
+        target_token_file=expand_path(get("CALENDAR_BLOCKER_TARGET_TOKEN_FILE", DEFAULT_TARGET_TOKEN_FILE)),
+        lock_file=expand_path(get("CALENDAR_BLOCKER_LOCK_FILE", DEFAULT_LOCK_FILE)),
+        send_updates=get("CALENDAR_BLOCKER_SEND_UPDATES", "none"),
+    )
+
+
+def require_sync_config(config: Config) -> None:
+    missing = []
+    if not config.source_calendar_id:
+        missing.append("CALENDAR_BLOCKER_SOURCE_CALENDAR_ID")
+    if not config.target_calendar_id:
+        missing.append("CALENDAR_BLOCKER_TARGET_CALENDAR_ID")
+    if missing:
+        raise CalendarBlockerError(f"Missing required config for sync: {', '.join(missing)}")
+
+
+def load_client_info(path: Path) -> OAuthClientInfo:
+    if not path.exists():
+        raise CalendarBlockerError(
+            f"Missing Google OAuth client secret file: {path}. "
+            "Create a Google Cloud OAuth Desktop client and save its JSON there."
+        )
+
+    raw = json.loads(path.read_text())
+    data = raw.get("installed") or raw.get("web") or raw
+    try:
+        client_id = data["client_id"]
+        client_secret = data.get("client_secret", "")
+    except KeyError as error:
+        raise CalendarBlockerError(f"{path} does not look like a Google OAuth client JSON file") from error
+
+    return OAuthClientInfo(
+        client_id=client_id,
+        client_secret=client_secret,
+        auth_uri=data.get("auth_uri", GOOGLE_AUTH_URI),
+        token_uri=data.get("token_uri", GOOGLE_TOKEN_URI),
+    )
+
+
+def read_json_file(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text())
+
+
+def write_json_private(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    temp_path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+    os.chmod(temp_path, 0o600)
+    temp_path.replace(path)
+
+
+def token_expired(token: dict[str, Any]) -> bool:
+    expires_at = float(token.get("expires_at", 0))
+    return not token.get("access_token") or time.time() >= expires_at
+
+
+def form_post(url: str, params: dict[str, str]) -> dict[str, Any]:
+    request = urllib.request.Request(
+        url,
+        data=urllib.parse.urlencode(params).encode(),
+        method="POST",
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+            "User-Agent": APP_NAME,
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            body = response.read().decode()
+            return json.loads(body) if body else {}
+    except urllib.error.HTTPError as error:
+        body = error.read().decode(errors="replace")
+        raise GoogleApiError("POST", url, error.code, body) from error
+
+
+class GoogleCalendarClient:
+    def __init__(self, token_file: Path, client_secret_file: Path):
+        self.token_file = token_file
+        self.client_info = load_client_info(client_secret_file)
+        self._token: dict[str, Any] | None = None
+
+    def access_token(self) -> str:
+        token = self.load_token()
+        if token_expired(token):
+            token = self.refresh_token(token)
+        access_token = token.get("access_token")
+        if not access_token:
+            raise CalendarBlockerError(f"No access_token in {self.token_file}; re-run authorization")
+        return str(access_token)
+
+    def load_token(self) -> dict[str, Any]:
+        if self._token is not None:
+            return self._token
+        if not self.token_file.exists():
+            raise CalendarBlockerError(f"Missing token file {self.token_file}; run --authorize for this account first")
+        self._token = read_json_file(self.token_file)
+        return self._token
+
+    def refresh_token(self, token: dict[str, Any]) -> dict[str, Any]:
+        refresh_token = token.get("refresh_token")
+        if not refresh_token:
+            raise CalendarBlockerError(f"Token file {self.token_file} has no refresh_token; re-run authorization")
+
+        log("INFO", f"Refreshing Google OAuth token: {self.token_file}")
+        response = form_post(
+            self.client_info.token_uri,
+            {
+                "client_id": self.client_info.client_id,
+                "client_secret": self.client_info.client_secret,
+                "refresh_token": str(refresh_token),
+                "grant_type": "refresh_token",
+            },
+        )
+        token.update(response)
+        if "refresh_token" not in token:
+            token["refresh_token"] = refresh_token
+        if "expires_in" in response:
+            token["expires_at"] = int(time.time()) + int(response["expires_in"]) - 60
+        write_json_private(self.token_file, token)
+        self._token = token
+        return token
+
+    def request(
+        self,
+        method: str,
+        path: str,
+        params: list[tuple[str, str]] | dict[str, str] | None = None,
+        body: dict[str, Any] | None = None,
+        retry_on_unauthorized: bool = True,
+    ) -> dict[str, Any]:
+        if path.startswith("https://"):
+            url = path
+        else:
+            url = GOOGLE_API_BASE + path
+
+        if params:
+            query = urllib.parse.urlencode(params, doseq=True)
+            url = f"{url}?{query}"
+
+        data = json.dumps(body).encode() if body is not None else None
+        headers = {
+            "Authorization": f"Bearer {self.access_token()}",
+            "Accept": "application/json",
+            "User-Agent": APP_NAME,
+        }
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+
+        request = urllib.request.Request(url, data=data, method=method, headers=headers)
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                raw_body = response.read().decode()
+                return json.loads(raw_body) if raw_body else {}
+        except urllib.error.HTTPError as error:
+            raw_body = error.read().decode(errors="replace")
+            if error.code == 401 and retry_on_unauthorized:
+                self._token = self.refresh_token(self.load_token())
+                return self.request(method, path, params, body, retry_on_unauthorized=False)
+            raise GoogleApiError(method, url, error.code, raw_body) from error
+
+    def list_calendar_list(self) -> list[dict[str, Any]]:
+        calendars: list[dict[str, Any]] = []
+        page_token = ""
+        while True:
+            params = [("maxResults", "250")]
+            if page_token:
+                params.append(("pageToken", page_token))
+            response = self.request("GET", "/users/me/calendarList", params=params)
+            calendars.extend(response.get("items", []))
+            page_token = response.get("nextPageToken", "")
+            if not page_token:
+                return calendars
+
+    def list_events(self, calendar_id: str, params: list[tuple[str, str]]) -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        page_token = ""
+        encoded_calendar_id = urllib.parse.quote(calendar_id, safe="")
+        while True:
+            page_params = list(params)
+            page_params.append(("maxResults", "2500"))
+            if page_token:
+                page_params.append(("pageToken", page_token))
+            response = self.request("GET", f"/calendars/{encoded_calendar_id}/events", params=page_params)
+            events.extend(response.get("items", []))
+            page_token = response.get("nextPageToken", "")
+            if not page_token:
+                return events
+
+    def insert_event(self, calendar_id: str, body: dict[str, Any], send_updates: str) -> dict[str, Any]:
+        encoded_calendar_id = urllib.parse.quote(calendar_id, safe="")
+        return self.request(
+            "POST",
+            f"/calendars/{encoded_calendar_id}/events",
+            params={"sendUpdates": send_updates},
+            body=body,
+        )
+
+    def patch_event(self, calendar_id: str, event_id: str, body: dict[str, Any], send_updates: str) -> dict[str, Any]:
+        encoded_calendar_id = urllib.parse.quote(calendar_id, safe="")
+        encoded_event_id = urllib.parse.quote(event_id, safe="")
+        return self.request(
+            "PATCH",
+            f"/calendars/{encoded_calendar_id}/events/{encoded_event_id}",
+            params={"sendUpdates": send_updates},
+            body=body,
+        )
+
+    def delete_event(self, calendar_id: str, event_id: str, send_updates: str) -> None:
+        encoded_calendar_id = urllib.parse.quote(calendar_id, safe="")
+        encoded_event_id = urllib.parse.quote(event_id, safe="")
+        try:
+            self.request(
+                "DELETE",
+                f"/calendars/{encoded_calendar_id}/events/{encoded_event_id}",
+                params={"sendUpdates": send_updates},
+            )
+        except GoogleApiError as error:
+            if error.status in (404, 410):
+                return
+            raise
+
+
+def rfc3339(timestamp: dt.datetime) -> str:
+    return timestamp.astimezone(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def event_time_for_log(event: dict[str, Any]) -> str:
+    start = event.get("start", {})
+    return str(start.get("dateTime") or start.get("date") or "unknown-time")
+
+
+def copy_event_time(value: dict[str, Any]) -> dict[str, str]:
+    copied: dict[str, str] = {}
+    for key in ("date", "dateTime", "timeZone"):
+        if key in value:
+            copied[key] = str(value[key])
+    return copied
+
+
+def parse_event_datetime(value: str) -> dt.datetime:
+    # Google Calendar returns RFC3339. datetime.fromisoformat accepts offsets but
+    # Python 3.9 needs Z normalized to +00:00.
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    return dt.datetime.fromisoformat(normalized)
+
+
+def buffered_event_times(config: Config, source: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
+    start = copy_event_time(source["start"])
+    end = copy_event_time(source["end"])
+
+    # All-day events use date instead of dateTime. Leave those as all-day blocks;
+    # turning them into midnight-based timed events would be surprising.
+    if "dateTime" not in start or "dateTime" not in end:
+        return start, end
+
+    start_dt = parse_event_datetime(start["dateTime"]) - dt.timedelta(minutes=config.buffer_before_minutes)
+    end_dt = parse_event_datetime(end["dateTime"]) + dt.timedelta(minutes=config.buffer_after_minutes)
+    start["dateTime"] = start_dt.isoformat()
+    end["dateTime"] = end_dt.isoformat()
+    return start, end
+
+
+def private_props(event: dict[str, Any]) -> dict[str, str]:
+    raw = event.get("extendedProperties", {}).get("private", {})
+    return {str(key): str(value) for key, value in raw.items()}
+
+
+def is_managed_target_event(event: dict[str, Any], source_calendar_id: str) -> bool:
+    props = private_props(event)
+    return props.get(MANAGED_KEY) == "true" and props.get(SOURCE_CALENDAR_KEY) == source_calendar_id
+
+
+def source_event_key(event: dict[str, Any]) -> str:
+    return str(event.get("id", ""))
+
+
+def marker_in_summary(summary: str, marker: str) -> bool:
+    if marker in summary:
+        return True
+
+    # Be forgiving about emoji variation selectors. The white-small-square marker
+    # may appear as either U+25AB or U+25AB U+FE0F depending on the client.
+    variation_selector_16 = "\ufe0f"
+    if variation_selector_16 in marker:
+        return marker.replace(variation_selector_16, "") in summary.replace(variation_selector_16, "")
+    return False
+
+
+def source_event_is_flagged(summary: str, config: Config) -> bool:
+    if config.title_prefix and summary.startswith(config.title_prefix):
+        return True
+    return any(marker_in_summary(summary, marker) for marker in config.title_contains_markers)
+
+
+def flagged_source_events(events: list[dict[str, Any]], config: Config) -> list[dict[str, Any]]:
+    flagged = []
+    for event in events:
+        if event.get("status") == "cancelled":
+            continue
+        summary = str(event.get("summary", ""))
+        if not source_event_is_flagged(summary, config):
+            continue
+        if "start" not in event or "end" not in event:
+            log("WARN", f"Skipping flagged event without start/end: {event.get('id', '<unknown>')}")
+            continue
+        flagged.append(event)
+    return flagged
+
+
+def desired_target_event(config: Config, source: dict[str, Any]) -> dict[str, Any]:
+    start, end = buffered_event_times(config, source)
+    props = {
+        MANAGED_KEY: "true",
+        SOURCE_CALENDAR_KEY: config.source_calendar_id,
+        SOURCE_EVENT_KEY: source_event_key(source),
+        SOURCE_ICAL_KEY: str(source.get("iCalUID", "")),
+        SOURCE_UPDATED_KEY: str(source.get("updated", "")),
+        BUFFER_BEFORE_KEY: str(config.buffer_before_minutes),
+        BUFFER_AFTER_KEY: str(config.buffer_after_minutes),
+    }
+
+    body: dict[str, Any] = {
+        "summary": config.target_summary,
+        "description": config.target_description,
+        "start": start,
+        "end": end,
+        "transparency": "opaque",
+        "visibility": config.target_visibility,
+        "reminders": {"useDefault": False},
+        "extendedProperties": {"private": props},
+    }
+    if config.target_color_id:
+        body["colorId"] = config.target_color_id
+    return body
+
+
+def comparable_existing_event(event: dict[str, Any], desired: dict[str, Any]) -> dict[str, Any]:
+    comparable: dict[str, Any] = {}
+    for key in ("summary", "description", "start", "end", "transparency", "visibility", "reminders", "colorId"):
+        if key in desired:
+            comparable[key] = event.get(key)
+    comparable["extendedProperties"] = {"private": {}}
+    existing_private = private_props(event)
+    desired_private = desired.get("extendedProperties", {}).get("private", {})
+    for key in desired_private:
+        comparable["extendedProperties"]["private"][key] = existing_private.get(key)
+    return comparable
+
+
+def event_needs_update(existing: dict[str, Any], desired: dict[str, Any]) -> bool:
+    return comparable_existing_event(existing, desired) != desired
+
+
+def list_source_events(client: GoogleCalendarClient, config: Config, time_min: str, time_max: str) -> list[dict[str, Any]]:
+    return client.list_events(
+        config.source_calendar_id,
+        [
+            ("timeMin", time_min),
+            ("timeMax", time_max),
+            ("singleEvents", "true"),
+            ("orderBy", "startTime"),
+            ("showDeleted", "false"),
+        ],
+    )
+
+
+def list_managed_target_events(client: GoogleCalendarClient, config: Config, time_min: str, time_max: str) -> list[dict[str, Any]]:
+    events = client.list_events(
+        config.target_calendar_id,
+        [
+            ("timeMin", time_min),
+            ("timeMax", time_max),
+            ("singleEvents", "true"),
+            ("orderBy", "startTime"),
+            ("showDeleted", "false"),
+            ("privateExtendedProperty", f"{MANAGED_KEY}=true"),
+        ],
+    )
+    return [event for event in events if is_managed_target_event(event, config.source_calendar_id)]
+
+
+def delete_target_event(client: GoogleCalendarClient, config: Config, event: dict[str, Any], dry_run: bool, reason: str) -> None:
+    event_id = str(event.get("id", ""))
+    if not event_id:
+        return
+    log("INFO", f"Delete target blocker {event_id} at {event_time_for_log(event)} ({reason})")
+    if not dry_run:
+        client.delete_event(config.target_calendar_id, event_id, config.send_updates)
+
+
+def sync(config: Config, dry_run: bool) -> None:
+    require_sync_config(config)
+    now = dt.datetime.now(dt.timezone.utc)
+    time_min = rfc3339(now - dt.timedelta(days=config.window_past_days))
+    time_max = rfc3339(now + dt.timedelta(days=config.window_future_days))
+
+    source_client = GoogleCalendarClient(config.source_token_file, config.client_secret_file)
+    target_client = GoogleCalendarClient(config.target_token_file, config.client_secret_file)
+
+    log("INFO", f"Sync window {time_min} → {time_max}; prefix={config.title_prefix!r}; contains={config.title_contains_markers!r}; buffer={config.buffer_before_minutes}/{config.buffer_after_minutes}m; dry_run={dry_run}")
+    source_events = flagged_source_events(list_source_events(source_client, config, time_min, time_max), config)
+    target_events = list_managed_target_events(target_client, config, time_min, time_max)
+    log("INFO", f"Found {len(source_events)} flagged source event(s), {len(target_events)} managed target blocker(s)")
+
+    source_by_key = {source_event_key(event): event for event in source_events if source_event_key(event)}
+    target_by_source_key: dict[str, list[dict[str, Any]]] = {}
+    for event in target_events:
+        source_key = private_props(event).get(SOURCE_EVENT_KEY, "")
+        if not source_key:
+            log("WARN", f"Managed target event lacks {SOURCE_EVENT_KEY}: {event.get('id', '<unknown>')}")
+            continue
+        target_by_source_key.setdefault(source_key, []).append(event)
+
+    created = updated = deleted = unchanged = 0
+
+    for key, source in sorted(source_by_key.items(), key=lambda item: event_time_for_log(item[1])):
+        desired = desired_target_event(config, source)
+        existing_events = target_by_source_key.pop(key, [])
+        if not existing_events:
+            log("INFO", f"Create target blocker for source {key} at {event_time_for_log(source)}")
+            created += 1
+            if not dry_run:
+                target_client.insert_event(config.target_calendar_id, desired, config.send_updates)
+            continue
+
+        keep = existing_events[0]
+        for duplicate in existing_events[1:]:
+            deleted += 1
+            delete_target_event(target_client, config, duplicate, dry_run, "duplicate blocker")
+
+        if event_needs_update(keep, desired):
+            log("INFO", f"Update target blocker {keep.get('id')} for source {key} at {event_time_for_log(source)}")
+            updated += 1
+            if not dry_run:
+                target_client.patch_event(config.target_calendar_id, str(keep["id"]), desired, config.send_updates)
+        else:
+            unchanged += 1
+
+    for stale_events in target_by_source_key.values():
+        for event in stale_events:
+            deleted += 1
+            delete_target_event(target_client, config, event, dry_run, "source missing, renamed, or unflagged")
+
+    log("INFO", f"Finished calendar-blocker sync; created={created} updated={updated} deleted={deleted} unchanged={unchanged}")
+
+
+def print_calendars(config: Config, which: str) -> None:
+    token_file = config.source_token_file if which == "source" else config.target_token_file
+    client = GoogleCalendarClient(token_file, config.client_secret_file)
+    calendars = client.list_calendar_list()
+    for calendar in sorted(calendars, key=lambda item: (str(item.get("summary", "")).lower(), str(item.get("id", "")))):
+        markers = []
+        if calendar.get("primary"):
+            markers.append("primary")
+        access_role = calendar.get("accessRole")
+        if access_role:
+            markers.append(str(access_role))
+        marker = f" ({', '.join(markers)})" if markers else ""
+        print(f"{calendar.get('summary', '<untitled>')}{marker}\n  id: {calendar.get('id')}\n")
+
+
+class OAuthCallbackHandler(http.server.BaseHTTPRequestHandler):
+    server_version = "CalendarBlockerOAuth/1.0"
+
+    def do_GET(self) -> None:  # noqa: N802 - stdlib callback name
+        parsed = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed.query)
+        self.server.oauth_params = {key: values[0] for key, values in params.items()}  # type: ignore[attr-defined]
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(
+            b"<html><body><h1>Calendar blocker authorized</h1>"
+            b"<p>You can close this tab and return to the terminal.</p></body></html>"
+        )
+
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 - stdlib signature
+        return
+
+
+def authorize(config: Config, which: str, port: int, open_browser: bool) -> None:
+    if which not in {"source", "target"}:
+        raise CalendarBlockerError(f"Unknown authorize target: {which}")
+
+    token_file = config.source_token_file if which == "source" else config.target_token_file
+    client_info = load_client_info(config.client_secret_file)
+    state = secrets.token_urlsafe(24)
+
+    server = http.server.HTTPServer(("127.0.0.1", port), OAuthCallbackHandler)
+    server.timeout = 300
+    redirect_uri = f"http://127.0.0.1:{server.server_port}/oauth2callback"
+    auth_params = {
+        "client_id": client_info.client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": GOOGLE_CALENDAR_SCOPE,
+        "access_type": "offline",
+        "prompt": "consent",
+        "include_granted_scopes": "true",
+        "state": state,
+    }
+    auth_url = f"{client_info.auth_uri}?{urllib.parse.urlencode(auth_params)}"
+
+    print(f"Authorize the {which} Google account. Token will be written to: {token_file}")
+    print(f"Redirect URI: {redirect_uri}")
+    print("\nOpen this URL if the browser does not open automatically:\n")
+    print(auth_url)
+    print("", flush=True)
+    if open_browser:
+        webbrowser.open(auth_url)
+
+    server.handle_request()
+    params = getattr(server, "oauth_params", {})
+    server.server_close()
+
+    if not params:
+        raise CalendarBlockerError("Timed out waiting for OAuth callback")
+    if params.get("state") != state:
+        raise CalendarBlockerError("OAuth state mismatch; refusing to save token")
+    if "error" in params:
+        raise CalendarBlockerError(f"OAuth failed: {params.get('error')}: {params.get('error_description', '')}")
+    code = params.get("code")
+    if not code:
+        raise CalendarBlockerError("OAuth callback did not include a code")
+
+    token = form_post(
+        client_info.token_uri,
+        {
+            "client_id": client_info.client_id,
+            "client_secret": client_info.client_secret,
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "grant_type": "authorization_code",
+        },
+    )
+    if "expires_in" in token:
+        token["expires_at"] = int(time.time()) + int(token["expires_in"]) - 60
+    token["scope"] = token.get("scope", GOOGLE_CALENDAR_SCOPE)
+    write_json_private(token_file, token)
+    log("INFO", f"Saved {which} token to {token_file}")
+
+
+def acquire_lock(path: Path) -> Any:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = path.open("w")
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        log("INFO", f"Another calendar-blocker run is active ({path}); exiting")
+        sys.exit(0)
+    return lock_file
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Mirror flagged personal calendar events as generic unavailable blocks on a work calendar.")
+    parser.add_argument("--env", default=DEFAULT_ENV_FILE, help=f"Env/config file (default: {DEFAULT_ENV_FILE})")
+    parser.add_argument("--dry-run", action="store_true", help="Print intended changes without writing to Google Calendar")
+    parser.add_argument("--authorize", choices=("source", "target", "both"), help="Run Google OAuth flow for the source and/or target account")
+    parser.add_argument("--auth-port", type=int, default=0, help="Local OAuth callback port; 0 picks a random free port")
+    parser.add_argument("--no-browser", action="store_true", help="Do not automatically open the OAuth URL")
+    parser.add_argument("--list-calendars", choices=("source", "target"), help="List calendars visible to the selected account")
+    parser.add_argument("--calendar_blocker_source_calendar_id", dest="calendar_blocker_source_calendar_id", help=argparse.SUPPRESS)
+    parser.add_argument("--calendar_blocker_target_calendar_id", dest="calendar_blocker_target_calendar_id", help=argparse.SUPPRESS)
+    parser.add_argument("--calendar_blocker_title_prefix", dest="calendar_blocker_title_prefix", help=argparse.SUPPRESS)
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+    config = load_config(args)
+
+    try:
+        if args.authorize:
+            targets = ["source", "target"] if args.authorize == "both" else [args.authorize]
+            for target in targets:
+                authorize(config, target, args.auth_port, open_browser=not args.no_browser)
+            return 0
+
+        if args.list_calendars:
+            print_calendars(config, args.list_calendars)
+            return 0
+
+        lock_file = acquire_lock(config.lock_file)
+        with lock_file:
+            sync(config, dry_run=args.dry_run)
+        return 0
+    except CalendarBlockerError as error:
+        log("ERROR", str(error))
+        return 1
+    except Exception as error:  # noqa: BLE001 - cron should log unexpected failures
+        log("ERROR", f"Unexpected failure: {type(error).__name__}: {error}")
+        traceback.print_exc()
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

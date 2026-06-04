@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+label="com.andrewkatz.calendar-blocker"
+script_path="$HOME/.config/scripts/calendar-blocker/sync"
+env_path="${CALENDAR_BLOCKER_ENV:-$HOME/.config/calendar-blocker.env}"
+example_env="$HOME/.config/scripts/calendar-blocker/env.example"
+plist_path="$HOME/Library/LaunchAgents/$label.plist"
+log_dir="$HOME/Library/Logs"
+interval="${CALENDAR_BLOCKER_INTERVAL:-300}"
+
+launch_target() {
+  echo "gui/$(id -u)"
+}
+
+uninstall() {
+  launchctl bootout "$(launch_target)" "$plist_path" 2>/dev/null || true
+  rm -f "$plist_path"
+  echo "Uninstalled $label"
+}
+
+if [[ "${1:-}" == "--uninstall" ]]; then
+  uninstall
+  exit 0
+fi
+
+mkdir -p "$(dirname "$env_path")" "$HOME/.config/calendar-blocker" "$HOME/Library/LaunchAgents" "$log_dir"
+
+if [[ ! -f "$env_path" ]]; then
+  cp "$example_env" "$env_path"
+  chmod 600 "$env_path"
+  cat <<MESSAGE
+Created $env_path from $example_env.
+
+Next steps:
+  1. Save a Google OAuth Desktop client JSON to:
+       $HOME/.config/calendar-blocker/client_secret.json
+  2. Authorize and list calendars:
+       $script_path --env "$env_path" --authorize source
+       $script_path --env "$env_path" --list-calendars source
+       $script_path --env "$env_path" --authorize target
+       $script_path --env "$env_path" --list-calendars target
+  3. Fill CALENDAR_BLOCKER_SOURCE_CALENDAR_ID and CALENDAR_BLOCKER_TARGET_CALENDAR_ID.
+  4. Rerun:
+       ~/.config/scripts/calendar-blocker/install-launchagent
+MESSAGE
+  exit 1
+fi
+
+# shellcheck source=/dev/null
+set -a
+source "$env_path"
+set +a
+
+missing=()
+[[ -n "${CALENDAR_BLOCKER_SOURCE_CALENDAR_ID:-}" ]] || missing+=("CALENDAR_BLOCKER_SOURCE_CALENDAR_ID")
+[[ -n "${CALENDAR_BLOCKER_TARGET_CALENDAR_ID:-}" ]] || missing+=("CALENDAR_BLOCKER_TARGET_CALENDAR_ID")
+[[ -f "${CALENDAR_BLOCKER_CLIENT_SECRET_FILE:-$HOME/.config/calendar-blocker/client_secret.json}" ]] || missing+=("CALENDAR_BLOCKER_CLIENT_SECRET_FILE")
+[[ -f "${CALENDAR_BLOCKER_SOURCE_TOKEN_FILE:-$HOME/.config/calendar-blocker/source-token.json}" ]] || missing+=("CALENDAR_BLOCKER_SOURCE_TOKEN_FILE")
+[[ -f "${CALENDAR_BLOCKER_TARGET_TOKEN_FILE:-$HOME/.config/calendar-blocker/target-token.json}" ]] || missing+=("CALENDAR_BLOCKER_TARGET_TOKEN_FILE")
+
+if (( ${#missing[@]} > 0 )); then
+  printf 'Update %s before installing; missing: %s\n' "$env_path" "${missing[*]}" >&2
+  exit 1
+fi
+
+cat > "$plist_path" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$label</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>$script_path</string>
+    <string>--env</string>
+    <string>$env_path</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StartInterval</key>
+  <integer>$interval</integer>
+
+  <key>StandardOutPath</key>
+  <string>$log_dir/calendar-blocker.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>$log_dir/calendar-blocker.err.log</string>
+</dict>
+</plist>
+PLIST
+
+launchctl bootout "$(launch_target)" "$plist_path" 2>/dev/null || true
+launchctl bootstrap "$(launch_target)" "$plist_path"
+launchctl kickstart -k "$(launch_target)/$label"
+
+cat <<MESSAGE
+Installed $label.
+It will run every $interval seconds while your Mac is awake.
+
+Config: $env_path
+Logs:   $log_dir/calendar-blocker.log
+Errors: $log_dir/calendar-blocker.err.log
+
+Manual dry-run:
+  $script_path --env "$env_path" --dry-run
+
+Uninstall:
+  ~/.config/scripts/calendar-blocker/install-launchagent --uninstall
+MESSAGE
