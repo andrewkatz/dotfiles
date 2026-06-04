@@ -516,6 +516,11 @@ def comparable_existing_event(event: dict[str, Any], desired: dict[str, Any]) ->
     for key in ("summary", "description", "start", "end", "transparency", "visibility", "reminders", "colorId"):
         if key in desired:
             comparable[key] = event.get(key)
+
+    # Google omits default transparency from returned events. Missing means opaque.
+    if desired.get("transparency") == "opaque" and comparable.get("transparency") is None:
+        comparable["transparency"] = "opaque"
+
     comparable["extendedProperties"] = {"private": {}}
     existing_private = private_props(event)
     desired_private = desired.get("extendedProperties", {}).get("private", {})
