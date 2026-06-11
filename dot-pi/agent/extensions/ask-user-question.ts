@@ -1,6 +1,76 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+// Mirrors developerly-status-pi.ts so the prompt file lands beside the
+// state file the status extension writes.
+function statusDir(): string {
+  return process.env.XDG_CACHE_HOME
+    ? join(process.env.XDG_CACHE_HOME, "developerly", "status")
+    : join(homedir(), ".cache", "developerly", "status");
+}
+
+function tmuxSession(): string | undefined {
+  const pane = process.env.TMUX_PANE;
+  if (!pane) return undefined;
+  try {
+    return execFileSync("tmux", ["display-message", "-p", "-t", pane, "#{session_name}"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return undefined;
+  }
+}
+
+function sanitize(session: string): string {
+  return session.replaceAll("/", "_");
+}
+
+function promptFile(): string | undefined {
+  const session = tmuxSession();
+  if (!session) return undefined;
+  return join(statusDir(), `${sanitize(session)}.prompt`);
+}
+
+// Publishes the pending question for the mobile web view (already in the
+// daemon's normalized shape). Best-effort: a failure to write must never
+// break the in-TUI question flow.
+function writePrompt(params: AskUserQuestionInput, allowCustom: boolean) {
+  const file = promptFile();
+  if (!file) return;
+  try {
+    mkdirSync(statusDir(), { recursive: true });
+    const payload = JSON.stringify({
+      agent: "pi",
+      questions: [{
+        question: params.question,
+        multiSelect: false,
+        allowCustom,
+        options: (params.options ?? []).map((o) => ({ label: o.label, description: o.description })),
+      }],
+    });
+    const tmp = `${file}.tmp`;
+    writeFileSync(tmp, payload);
+    renameSync(tmp, file);
+  } catch {
+    // ignore
+  }
+}
+
+function clearPrompt() {
+  const file = promptFile();
+  if (!file) return;
+  try {
+    rmSync(file, { force: true });
+  } catch {
+    // ignore
+  }
+}
 
 const OptionSchema = Type.Object({
   label: Type.String({ description: "Short answer label shown to the user" }),
@@ -71,31 +141,36 @@ export default function askUserQuestion(pi: ExtensionAPI) {
         };
       }
 
-      if (options.length === 0 || allowCustomResponse) {
-        if (options.length > 0) {
-          const customChoice = `${options.length + 1}. Type a custom response`;
-          const choices = [...options.map(optionDisplay), customChoice];
-          const choice = await ctx.ui.select(params.question, choices, { signal });
-          if (!choice) return result(params.question, optionLabels, null, false);
+      writePrompt(params, allowCustomResponse);
+      try {
+        if (options.length === 0 || allowCustomResponse) {
+          if (options.length > 0) {
+            const customChoice = `${options.length + 1}. Type a custom response`;
+            const choices = [...options.map(optionDisplay), customChoice];
+            const choice = await ctx.ui.select(params.question, choices, { signal });
+            if (!choice) return result(params.question, optionLabels, null, false);
 
-          const selectedIndex = choices.indexOf(choice);
-          if (selectedIndex >= 0 && selectedIndex < options.length) {
-            return result(params.question, optionLabels, options[selectedIndex].label, false);
+            const selectedIndex = choices.indexOf(choice);
+            if (selectedIndex >= 0 && selectedIndex < options.length) {
+              return result(params.question, optionLabels, options[selectedIndex].label, false);
+            }
           }
+
+          const answer = await ctx.ui.input(params.question, params.placeholder ?? "Type your answer...", { signal });
+          if (answer === undefined) return result(params.question, optionLabels, null, true);
+          return result(params.question, optionLabels, answer, true);
         }
 
-        const answer = await ctx.ui.input(params.question, params.placeholder ?? "Type your answer...", { signal });
-        if (answer === undefined) return result(params.question, optionLabels, null, true);
-        return result(params.question, optionLabels, answer, true);
+        const choices = options.map(optionDisplay);
+        const choice = await ctx.ui.select(params.question, choices, { signal });
+        if (!choice) return result(params.question, optionLabels, null, false);
+
+        const selectedIndex = choices.indexOf(choice);
+        const answer = selectedIndex >= 0 ? options[selectedIndex].label : choice;
+        return result(params.question, optionLabels, answer, false);
+      } finally {
+        clearPrompt();
       }
-
-      const choices = options.map(optionDisplay);
-      const choice = await ctx.ui.select(params.question, choices, { signal });
-      if (!choice) return result(params.question, optionLabels, null, false);
-
-      const selectedIndex = choices.indexOf(choice);
-      const answer = selectedIndex >= 0 ? options[selectedIndex].label : choice;
-      return result(params.question, optionLabels, answer, false);
     },
 
     renderCall(args, theme, _context) {

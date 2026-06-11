@@ -45,7 +45,8 @@ fade_enabled = false
 fade_duration_ms = 180.0
 
 [settings.gestures]
-enabled = true
+# Disabled because three-finger swipes were causing accidental workspace changes.
+enabled = false
 invert_horizontal_swipe = false
 skip_empty = true
 fingers = 3

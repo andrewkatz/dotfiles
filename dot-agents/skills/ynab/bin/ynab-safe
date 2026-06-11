@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! command -v ynab >/dev/null 2>&1; then
+  echo "ynab-safe: missing 'ynab' CLI. Install with: npm install -g ynab-cli-rs" >&2
+  exit 127
+fi
+
+for arg in "$@"; do
+  case "$arg" in
+    --token|--token=*)
+      echo "ynab-safe: refusing --token on the command line; use YNAB_ACCESS_TOKEN or 'ynab auth login --pat'." >&2
+      exit 2
+      ;;
+  esac
+done
+
+# Find the first two positional words after global/options so write commands can be guarded.
+# The skill generally puts the command first, but this also handles common global options first.
+positional=()
+skip_next=0
+for arg in "$@"; do
+  if [[ "$skip_next" == "1" ]]; then
+    skip_next=0
+    continue
+  fi
+
+  case "$arg" in
+    --plan-id|--id|--output-format|--fields|--output|--json|--body|--transaction-id|--account-id|--category-id|--payee-id|--scheduled-transaction-id|--month|--budgeted|--since-date|--type|--last-knowledge|--date|--memo|--payee-name)
+      skip_next=1
+      continue
+      ;;
+    --plan-id=*|--id=*|--output-format=*|--fields=*|--output=*|--json=*|--body=*|--transaction-id=*|--account-id=*|--category-id=*|--payee-id=*|--scheduled-transaction-id=*|--month=*|--budgeted=*|--since-date=*|--type=*|--last-knowledge=*|--date=*|--memo=*|--payee-name=*)
+      continue
+      ;;
+    --*)
+      continue
+      ;;
+    -*)
+      continue
+      ;;
+    *)
+      positional+=("$arg")
+      ;;
+  esac
+done
+
+cmd1="${positional[0]:-}"
+cmd2="${positional[1]:-}"
+
+if [[ "$cmd1" == "auth" && "$cmd2" == "token" ]]; then
+  echo "ynab-safe: refusing 'auth token' because it prints the access token." >&2
+  exit 2
+fi
+
+is_write=0
+case "$cmd1 $cmd2" in
+  "transactions create"|"transactions update"|"transactions update-bulk"|"transactions delete"|"transactions import"|\
+  "accounts create"|\
+  "categories update"|"categories budget"|\
+  "payees update"|\
+  "scheduled delete")
+    is_write=1
+    ;;
+esac
+
+if [[ "$cmd1" == "api" ]]; then
+  method="$(printf '%s' "$cmd2" | tr '[:lower:]' '[:upper:]')"
+  case "$method" in
+    POST|PUT|PATCH|DELETE)
+      is_write=1
+      ;;
+  esac
+fi
+
+has_output_format=0
+has_dollars=0
+has_dry_run=0
+passthrough_only=0
+for arg in "$@"; do
+  case "$arg" in
+    --output-format|--output-format=*) has_output_format=1 ;;
+    --dollars) has_dollars=1 ;;
+    --dry-run) has_dry_run=1 ;;
+    -h|--help|-V|--version) passthrough_only=1 ;;
+  esac
+done
+
+args=("$@")
+
+if [[ "$passthrough_only" != "1" ]]; then
+  if [[ "$has_output_format" != "1" ]]; then
+    args+=(--output-format json)
+  fi
+  if [[ "$has_dollars" != "1" ]]; then
+    args+=(--dollars)
+  fi
+  if [[ "$is_write" == "1" && "${YNAB_ALLOW_WRITES:-}" != "1" && "$has_dry_run" != "1" ]]; then
+    echo "ynab-safe: write command detected; adding --dry-run. Set YNAB_ALLOW_WRITES=1 only after explicit confirmation." >&2
+    args+=(--dry-run)
+  fi
+fi
+
+exec ynab "${args[@]}"
