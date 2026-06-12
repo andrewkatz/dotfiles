@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+
+# Print the Developerly current-task label with the task name before the
+# project-initials badge. Developerly stores the canonical styled label in the
+# tmux session option @developerly_status_task as:
+#   #[fg=...,bg=...,bold] IM #[default] Clean up design system
+# This script emits:
+#   Clean up design system #[fg=...,bg=...,bold] IM #[default]
+
+set -euo pipefail
+
+session="${1:-}"
+raw=""
+
+if [[ -n "$session" ]] && command -v tmux >/dev/null 2>&1; then
+  raw="$(tmux show-options -t "$session" -qv @developerly_status_task 2>/dev/null || true)"
+fi
+
+if [[ -z "$raw" ]] && command -v developerly >/dev/null 2>&1; then
+  if [[ -n "$session" ]]; then
+    raw="$(developerly status task "$session" 2>/dev/null || true)"
+  else
+    raw="$(developerly status task 2>/dev/null || true)"
+  fi
+fi
+
+if [[ -z "$raw" ]]; then
+  raw="developerly"
+fi
+
+printf '%s\n' "$raw" | perl -CS -pe '
+  # Styled Developerly output: move the badge from the left to the right.
+  if (!s/^(#\[[^\]]+\]\s+\S+\s+#\[default\])\s+(.+)$/$2 $1/) {
+    # Plain fallback, in case Developerly ever returns unstyled text here.
+    s/^([A-Z0-9]{1,6})\s+(.+)$/$2 $1/;
+  }
+'
