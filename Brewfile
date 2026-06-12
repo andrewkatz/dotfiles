@@ -1,14 +1,13 @@
-tap "acsandmann/tap"
-tap "anomalyco/tap"
-tap "asheshgoplani/tap"
-tap "charmbracelet/tap"
-tap "epk/epk"
-tap "felixkratz/formulae"
-tap "hashicorp/tap"
-tap "lanes-sh/lanes"
-tap "manaflow-ai/cmux"
-tap "stripe/stripe-cli"
-tap "superset-sh/tap"
+tap "acsandmann/tap", trusted: true
+tap "anomalyco/tap", trusted: true
+tap "asheshgoplani/tap", trusted: true
+tap "charmbracelet/tap", trusted: true
+tap "epk/epk", trusted: true
+tap "hashicorp/tap", trusted: true
+tap "lanes-sh/lanes", trusted: true
+tap "manaflow-ai/cmux", trusted: true
+tap "stripe/stripe-cli", trusted: true
+tap "superset-sh/tap", trusted: true
 brew "age"
 brew "acsandmann/tap/rift"
 brew "openssl@3"
