@@ -6,7 +6,7 @@ source "$(dirname "$0")/lib/logging.sh"
 
 # Locations (overridable via env for testing)
 SECRETS_REPO_URL="${SECRETS_REPO_URL:-git@github.com:andrewkatz/dotfiles-secrets.git}"
-SECRETS_REPO_DIR="${SECRETS_REPO_DIR:-$HOME/.config/dotfiles-secrets}"
+SECRETS_REPO_DIR="${SECRETS_REPO_DIR:-$HOME/Work/dotfiles-secrets}"
 SECRETS_FILE="${SECRETS_FILE:-$SECRETS_REPO_DIR/secrets.yaml}"
 SOPS_AGE_KEY_FILE="${SOPS_AGE_KEY_FILE:-$HOME/.config/sops/age/keys.txt}"
 MACHINE_NAME_FILE="${MACHINE_NAME_FILE:-$HOME/.config/dotfiles/machine_name}"
@@ -145,14 +145,117 @@ backup_secrets() {
 # Values are JSON-encoded (double-quoted, with \" and \\ escaped). This intentionally
 # preserves shell expansion of $VAR and $(cmd) inside values, matching the legacy
 # 1Password-based bin/ss behavior so existing values like "$HOME/dev" still work.
+# Nested objects/arrays are reserved for richer secret types like `files:` and are
+# intentionally skipped here.
 emit_section() {
   local section="$1"
   sops --decrypt --output-type json "$SECRETS_FILE" \
     | jq -r --arg section "$section" '
         (.[$section] // {})
         | to_entries[]
+        | select(.value | type | IN("string", "number", "boolean"))
         | "export \(.key)=\(.value | tostring | @json)"
       '
+}
+
+# Emit JSONL entries from a section's optional `files:` array. Each entry is:
+#   { path: ".ssh/id_ed25519", mode: "600", content: "..." }
+emit_secret_file_entries() {
+  local section="$1"
+  sops --decrypt --output-type json "$SECRETS_FILE" \
+    | jq -c --arg section "$section" '
+        (.[$section].files // [])
+        | if type == "array" then .[] else empty end
+        | {
+            path: (.path // ""),
+            mode: (.mode // "600" | tostring),
+            content: (.content // "" | tostring)
+          }
+      '
+}
+
+resolve_secret_file_path() {
+  local secret_path="$1"
+  local target
+
+  case "$secret_path" in
+    ""|*$'\n'*|".."|../*|*/..|*/../*)
+      log_error "Refusing unsafe secret file path: $secret_path"
+      return 1
+      ;;
+    \~/*)
+      target="$HOME/${secret_path#\~/}"
+      ;;
+    \$HOME/*)
+      target="$HOME/${secret_path#\$HOME/}"
+      ;;
+    /*)
+      target="$secret_path"
+      ;;
+    *)
+      target="$HOME/$secret_path"
+      ;;
+  esac
+
+  case "$target" in
+    "$HOME"/*)
+      printf '%s\n' "$target"
+      ;;
+    *)
+      log_error "Refusing to write secret file outside HOME: $secret_path"
+      return 1
+      ;;
+  esac
+}
+
+install_secret_files_for_section() {
+  local section="$1"
+  local entry secret_path mode target parent tmp
+
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+
+    secret_path="$(printf '%s' "$entry" | jq -r '.path')"
+    mode="$(printf '%s' "$entry" | jq -r '.mode')"
+
+    case "$mode" in
+      [0-7][0-7][0-7]|[0-7][0-7][0-7][0-7])
+        ;;
+      *)
+        log_error "Invalid mode '$mode' for secret file '$secret_path'; using 600."
+        mode="600"
+        ;;
+    esac
+
+    target="$(resolve_secret_file_path "$secret_path")" || continue
+    parent="$(dirname "$target")"
+
+    mkdir -p "$parent"
+
+    # Keep the standard secret directories private even if they already existed
+    # with broader permissions.
+    case "$parent" in
+      "$HOME/.ssh"|"$HOME/.ssh"/*)
+        chmod 700 "$HOME/.ssh" "$parent" 2>/dev/null || true
+        ;;
+      "$HOME/.aws"|"$HOME/.aws"/*)
+        chmod 700 "$HOME/.aws" "$parent" 2>/dev/null || true
+        ;;
+    esac
+
+    tmp="$(mktemp "$parent/.secret.XXXXXX")"
+    printf '%s' "$entry" | jq -r '.content' > "$tmp"
+    chmod "$mode" "$tmp"
+    mv "$tmp" "$target"
+    log "Wrote $target"
+  done < <(emit_secret_file_entries "$section")
+}
+
+install_secret_files() {
+  local section="$1"
+
+  install_secret_files_for_section "common"
+  install_secret_files_for_section "$section"
 }
 
 install_secrets() {
@@ -182,6 +285,8 @@ install_secrets() {
 
   chmod 600 "$ZSH_SECRETS_FILE"
   log "Wrote $ZSH_SECRETS_FILE"
+
+  install_secret_files "$section"
 }
 
 # Only run when executed directly, not when sourced

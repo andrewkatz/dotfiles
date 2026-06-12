@@ -28,7 +28,7 @@ On a fresh machine, `bin/install` can decrypt machine secrets after an age key i
 - `bin/install --profile wsl` — Linux: install the headless WSL CLI/dev package set (no GUI apps).
 - `bin/install --only-stow` — only set up Pi layout and run stow.
 - `bin/diff` — show what symlinks are missing (stow dry-run).
-- `bin/ss` — decrypt machine secrets and write `~/.zsh_secrets`.
+- `bin/ss` — decrypt machine secrets, write `~/.zsh_secrets`, and install any generated secret files such as `~/.aws/*` or `~/.ssh/*`.
 - `bin/migrate-from-1password` — one-shot migration from a 1Password item to the private sops repo.
 - `bin/update` — update packages (brew/yay/paru) and nvim plugins.
 
