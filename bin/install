@@ -310,13 +310,23 @@ archfile_packages() {
 install_brewfile_taps() {
   local brewfile="$repo_dir/Brewfile"
   local taps=()
+  local trusted_taps=()
+  local tap_line
   local tap
 
   [ -f "$brewfile" ] || return 0
 
-  while IFS= read -r tap; do
-    [ -n "$tap" ] && taps+=("$tap")
-  done < <(grep -E '^[[:space:]]*tap[[:space:]]+"' "$brewfile" | cut -d '"' -f 2)
+  while IFS= read -r tap_line; do
+    tap="$(printf '%s\n' "$tap_line" | cut -d '"' -f 2)"
+    [ -n "$tap" ] || continue
+
+    taps+=("$tap")
+    case "$tap_line" in
+      *trusted:*true*)
+        trusted_taps+=("$tap")
+        ;;
+    esac
+  done < <(grep -E '^[[:space:]]*tap[[:space:]]+"' "$brewfile")
 
   if [ "${#taps[@]}" -gt 0 ]; then
     local installed_taps
@@ -330,6 +340,13 @@ install_brewfile_taps() {
 
       brew tap "$tap"
       installed_taps="${installed_taps}${installed_taps:+$'\n'}${tap}"
+    done
+  fi
+
+  if [ "${#trusted_taps[@]}" -gt 0 ] && brew help trust >/dev/null 2>&1; then
+    log "Trusting Brewfile taps..."
+    for tap in "${trusted_taps[@]}"; do
+      brew trust "$tap"
     done
   fi
 }
