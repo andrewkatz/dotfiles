@@ -307,9 +307,27 @@ archfile_packages() {
   done | awk 'NF { print $1 }' | awk '!seen[$0]++' | tr '\n' ' '
 }
 
+install_brewfile_taps() {
+  local brewfile="$repo_dir/Brewfile"
+  local taps=()
+  local tap
+
+  [ -f "$brewfile" ] || return 0
+
+  while IFS= read -r tap; do
+    [ -n "$tap" ] && taps+=("$tap")
+  done < <(grep -E '^[[:space:]]*tap[[:space:]]+"' "$brewfile" | cut -d '"' -f 2)
+
+  if [ "${#taps[@]}" -gt 0 ]; then
+    log "Tapping Brewfile taps..."
+    brew tap "${taps[@]}"
+  fi
+}
+
 install_packages() {
   if [ "$(uname)" = "Darwin" ]; then
     if [ -f "$repo_dir/Brewfile" ]; then
+      install_brewfile_taps
       log "Installing Brewfile packages..."
       brew bundle --file="$repo_dir/Brewfile"
     fi

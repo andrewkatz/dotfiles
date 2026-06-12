@@ -7,6 +7,8 @@ remove_broken_links() {
   local pattern="$2"
   local find_args="$3"
 
+  [ -e "$path" ] || [ -L "$path" ] || return 0
+
   find "$path" $find_args -type l | while read -r link; do
     if [ ! -e "$link" ]; then
       target=$(readlink "$link")
@@ -31,6 +33,8 @@ remove_absolute_links() {
   local find_args="$2"
   local repo_dir
   repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+  [ -e "$path" ] || [ -L "$path" ] || return 0
 
   find "$path" $find_args -type l | while read -r link; do
     target=$(readlink "$link")
