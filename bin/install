@@ -319,8 +319,18 @@ install_brewfile_taps() {
   done < <(grep -E '^[[:space:]]*tap[[:space:]]+"' "$brewfile" | cut -d '"' -f 2)
 
   if [ "${#taps[@]}" -gt 0 ]; then
+    local installed_taps
+    installed_taps="$(brew tap)"
+
     log "Tapping Brewfile taps..."
-    brew tap "${taps[@]}"
+    for tap in "${taps[@]}"; do
+      if printf '%s\n' "$installed_taps" | grep -qxF "$tap"; then
+        continue
+      fi
+
+      brew tap "$tap"
+      installed_taps="${installed_taps}${installed_taps:+$'\n'}${tap}"
+    done
   fi
 }
 
