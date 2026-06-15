@@ -69,3 +69,9 @@
   repo = "/Users/andrewkatz/Work/race-spoilers"
   default_branch = "main"
   developerly_project_id = 0
+
+[[projects]]
+  name = "VIA Marketing"
+  repo = "/Users/andrewkatz/Work/via-marketing"
+  default_branch = "main"
+  developerly_project_id = 0
