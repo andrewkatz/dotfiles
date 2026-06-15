@@ -138,6 +138,23 @@ if ! LINUX_PROFILE="$(normalize_linux_profile "$LINUX_PROFILE_RAW")"; then
   exit 1
 fi
 
+# Scripts in bin/ are repo-local (bin/ is stow-ignored), but a few are meant to
+# be run as personal commands. Symlink those into ~/.bin so aliases like
+# `update` (-> ~/.bin/update) resolve regardless of where the repo is cloned.
+link_user_bin() {
+  local user_commands=(update)
+  local bin_dir="$HOME/.bin"
+  local cmd target link
+
+  mkdir -p "$bin_dir"
+  log "Linking user commands into $bin_dir..."
+  for cmd in "${user_commands[@]}"; do
+    target="$script_dir/$cmd"
+    link="$bin_dir/$cmd"
+    ln -sfn "$target" "$link"
+  done
+}
+
 run_stow() {
   "$script_dir/setup-pi-agent-layout"
 
@@ -162,6 +179,8 @@ run_stow() {
     (cd "$repo_dir" && run_stow_command stow --verbose=2 --dotfiles -t "$HOME" -d . linux)
   fi
   clean_broken_symlinks
+
+  link_user_bin
 }
 
 if [ "$ONLY_STOW" = true ]; then
