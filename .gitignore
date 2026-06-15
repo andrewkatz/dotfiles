@@ -31,8 +31,12 @@ dot-pi/agent/*
 !dot-pi/agent/keybindings.json
 !dot-pi/agent/prompts
 !dot-pi/agent/settings.json
+!dot-pi/agent/skills
 dot-pi/agent/extensions/*
 !dot-pi/agent/extensions/*.ts
 !dot-pi/agent/extensions/*.json
 dot-pi/agent/prompts/*
 !dot-pi/agent/prompts/*.md
+# Skills are CLI-managed/symlinked; only track our own (e.g. dev-qa), not developerly.
+dot-pi/agent/skills/*
+!dot-pi/agent/skills/dev-qa
