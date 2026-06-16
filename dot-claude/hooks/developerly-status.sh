@@ -4,9 +4,6 @@
 # a single argument indicating what just happened:
 #
 #   pre_tool_use       → working   (claude is actively doing things)
-#                        awaiting when the tool is AskUserQuestion — the
-#                        raw payload is also saved to <session>.prompt so
-#                        the mobile web view can render the options
 #   post_tool_use      → working   (claude is still in an active turn)
 #   post_tool_failure  → working   (claude is still in an active turn)
 #   user_prompt_submit → working   (the user answered; claude can resume)
@@ -60,27 +57,12 @@ json_string_field() {
     printf '%s' "$stdin_payload" | grep -oE '"'"$key"'"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n 1 | grep -oE '"[^"]*"$' | tr -d '"' || true
 }
 
-# prompt_action manages the sibling <session>.prompt file the mobile web
-# view renders as a structured question card. AskUserQuestion's payload
-# carries the full question/options JSON, so we dump the raw stdin for the
-# daemon to parse (no nested-JSON parsing in bash). Claude surfaces
-# AskUserQuestion through BOTH PreToolUse and PermissionRequest (fired
-# together), so both write the prompt file; any transition away from the
-# question — or a non-question permission prompt — clears it.
-prompt_action="clear"
 case "$event" in
     pre_tool_use|post_tool_use|post_tool_failure|user_prompt_submit)
         state="working"
-        if [ "$event" = "pre_tool_use" ] && [ "$(json_string_field "tool_name")" = "AskUserQuestion" ]; then
-            state="awaiting"
-            prompt_action="write"
-        fi
         ;;
     permission_request)
         state="awaiting"
-        if [ "$(json_string_field "tool_name")" = "AskUserQuestion" ]; then
-            prompt_action="write"
-        fi
         ;;
     stop|session_end)
         state="idle"
@@ -90,7 +72,6 @@ case "$event" in
         case "$notification_type" in
             permission_prompt|question_prompt|input_prompt|user_input)
                 state="awaiting"
-                prompt_action="keep"
                 ;;
             *)
                 exit 0
@@ -104,18 +85,5 @@ esac
 
 # Mirror cli/internal/tui/status.sanitize(): only `/` is escaped.
 file=$(printf '%s' "$session" | tr '/' '_')
-
-# Tmp names carry $$ — concurrent invocations (parallel tool calls fire
-# concurrent PreToolUse hooks) must not race each other's rename source.
-case "$prompt_action" in
-    write)
-        printf '%s' "$stdin_payload" > "$dir/$file.prompt.tmp.$$"
-        mv "$dir/$file.prompt.tmp.$$" "$dir/$file.prompt"
-        ;;
-    clear)
-        rm -f "$dir/$file.prompt"
-        ;;
-esac
-
-printf '%s' "$state" > "$dir/$file.tmp.$$"
-mv "$dir/$file.tmp.$$" "$dir/$file"
+printf '%s' "$state" > "$dir/$file.tmp"
+mv "$dir/$file.tmp" "$dir/$file"

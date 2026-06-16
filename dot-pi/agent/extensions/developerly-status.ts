@@ -38,8 +38,6 @@ function writeStatus(state: "idle" | "working" | "awaiting") {
   renameSync(tmp, file);
 }
 
-const AWAITING_TOOLS = new Set(["ask_user_question", "plan_exit"]);
-
 export default function (_pi: ExtensionAPI) {
   const awaitingToolCalls = new Set<string>();
 
@@ -64,13 +62,8 @@ export default function (_pi: ExtensionAPI) {
     writeStatus("idle");
   }
 
-  function isAwaitingTool(event: unknown): boolean {
-    const name = toolName(event);
-    return typeof name === "string" && AWAITING_TOOLS.has(name);
-  }
-
   function markToolStart(event: unknown, _ctx: ExtensionContext) {
-    if (isAwaitingTool(event)) {
+    if (toolName(event) === "ask_user_question") {
       const id = toolCallId(event);
       if (id) awaitingToolCalls.add(id);
       writeStatus("awaiting");
@@ -80,7 +73,7 @@ export default function (_pi: ExtensionAPI) {
   }
 
   function markToolEnd(event: unknown, _ctx: ExtensionContext) {
-    if (isAwaitingTool(event)) {
+    if (toolName(event) === "ask_user_question") {
       const id = toolCallId(event);
       if (id) awaitingToolCalls.delete(id);
     }
