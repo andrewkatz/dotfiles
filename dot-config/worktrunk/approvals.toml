@@ -103,4 +103,30 @@ EOF
 
 mise trust
 """,
+    """
+    cat > mise.local.toml <<EOF
+# Auto-generated for worktree: $next_num
+[env]
+PORT = {{ branch | hash_port }}
+WEB_PORT = {{ branch | hash_port }}
+COMPOSE_PROJECT_NAME = "via-platform"
+DATABASE_PORT = 24662
+REDIS_PORT = 52944
+MAILHOG_SMTP_PORT = 53865
+MAILHOG_HTTP_PORT = 26053
+PLATFORM_DATABASE_NAME = "app_dev_{{ branch | sanitize_db }}"
+CORE_DATABASE_NAME = "core_dev_{{ branch | sanitize_db }}"
+PLATFORM_TEST_DATABASE_NAME = "app_test_{{ branch | sanitize_db }}"
+CORE_TEST_DATABASE_NAME = "core_test_{{ branch | sanitize_db }}"
+REDIS_NAMESPACE = "via:{{ branch | sanitize_db }}"
+AWS_REGION = "us-west-2"
+AWS_DEFAULT_PROFILE = "p"
+SNOWFLAKE_DEV_SUFFIX = "ANDREW_{{ branch | sanitize_db }}"
+EOF
+
+    awk '/^[[:space:]]*KAMAL_SSH_PROXY_USER[[:space:]]*=/{ print; exit }' "{{ primary_worktree_path }}/mise.local.toml" >> mise.local.toml 2>/dev/null || true
+
+mise trust
+""",
+    "mise exec -- docker-compose up -d --no-recreate ; sleep 2",
 ]
