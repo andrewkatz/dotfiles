@@ -1,6 +1,6 @@
 ---
 name: dev-qa
-description: QA an app in the local development environment with a real browser. Use when asked to QA, manually test, smoke-test, dogfood, click through, or verify a feature/page in dev — anything that means driving a running dev server in a browser. Handles both Rails and Vite apps: finding the worktree-specific dev URL, reusing the already-running dev server, and signing in when the app has auth.
+description: "QA an app in the local development environment with a real browser. Use when asked to QA, manually test, smoke-test, dogfood, click through, or verify a feature/page in dev — anything that means driving a running dev server in a browser. Handles both Rails and Vite apps: finding the worktree-specific dev URL, reusing the already-running dev server, and signing in when the app has auth."
 ---
 
 # Dev QA
