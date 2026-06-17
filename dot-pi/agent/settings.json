@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.79.3",
+  "lastChangelogVersion": "0.79.6",
   "packages": [
     "npm:@benvargas/pi-firecrawl"
   ],
@@ -11,5 +11,6 @@
     "keepRecentTokens": 12000
   },
   "defaultThinkingLevel": "xhigh",
-  "hideThinkingBlock": true
+  "hideThinkingBlock": true,
+  "theme": "dark"
 }
