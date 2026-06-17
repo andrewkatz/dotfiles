@@ -9,6 +9,13 @@ Drive an app's **running local dev server** in a browser to QA a feature. Works 
 
 Use the **`agent-browser`** skill for all browser interaction (navigate, click, type, screenshot, read DOM). Invoke it the same way you would any other skill.
 
+**Use a worktree-unique browser session.** Other worktrees — and other agents — may be QA-ing at the same time. The default (unnamed) `agent-browser` session is shared, so concurrent runs would stomp on each other's cookies, tabs, and login state. Give this run its own session and pass it on **every** `agent-browser` command:
+
+- Pick a unique name keyed to this worktree. `$PORT`/`$WEB_PORT` is exported per-worktree (see step 1) and is already unique across worktrees, so **`qa-$PORT`** is the default choice.
+- Pass `--session "qa-$PORT"` on every command (login in step 3 and QA in step 4 both need it). Prefer `--session` over the `AGENT_BROWSER_SESSION` env var: env exports don't carry across separate shell invocations here, so a one-time `export` silently drops back to the shared default on the next command.
+- If you're one of **several agents on the same worktree** (same `$PORT`), the port alone collides — append a suffix you choose once and reuse for the whole run (e.g. `qa-$PORT-b`).
+- `agent-browser close --session "qa-$PORT"` when you're done, so the named session doesn't linger.
+
 ## 1. Find this worktree's dev URL
 
 Discovery is tiered — take the first that applies:
