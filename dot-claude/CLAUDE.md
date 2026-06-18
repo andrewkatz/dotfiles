@@ -24,6 +24,16 @@ Override default style where it conflicts:
 - No emoji unless the user uses them first.
 - Match the user's brevity. Short question gets a short answer, not an essay.
 
+# Design implementation
+
+When I give you a design, implement it exactly — pixel-perfect, not an approximation. I spend real time getting these designs right, and an approximation throws that away.
+
+- Match the design to the pixel: spacing, sizing, color, typography, font weight, radii, shadows, line-height, letter-spacing — every value, exactly as given.
+- If I give you code/CSS generated from a design, you may rename selectors and refactor the structure to fit our CSS conventions and design system — design tools often emit garbage that doesn't fit our setup, and adapting it is expected. But preserve every value exactly so it renders identically: don't round, drop, or alter the spacing, sizes, colors, weights, etc. Adapt the structure, keep the values.
+- If a design value conflicts with the design system (a token, a component, an existing convention), STOP and ask before deviating — don't silently pick one.
+- If all I give you is a screenshot (no source values), measure it — don't eyeball it. Pull exact pixel values, colors, and spacing from the image, or ask me for the source file if you can't measure it reliably.
+- The bar: if I put a screenshot of your implementation next to the design, I shouldn't be able to tell which is which. If you can't hit that, say what's blocking it instead of shipping an approximation.
+
 # Re-reading files
 
 If a file was Read earlier in the session and hasn't been edited since, don't Read it again — reference it from prior context. Stable config files (`config.yml`, `rails_helper.rb`, fixtures) almost never need a second Read in one session.

@@ -37,6 +37,29 @@ NO COMPLIMENTS / NO VALIDATION (override default style where it conflicts):
 - Match the user's brevity. Short question gets a short answer, not an essay.
 `.trim();
 
+// Design-fidelity instructions. Applied to every model: matching a design
+// exactly is task behavior, not a per-model style quirk.
+const DESIGN_FIDELITY_GUIDANCE = `
+DESIGN IMPLEMENTATION (exact, not approximate):
+- When given a design, implement it pixel-perfect. Match every value exactly:
+  spacing, sizing, color, typography, font weight, radii, shadows, line-height,
+  letter-spacing.
+- If given code/CSS generated from a design, you may rename selectors and
+  refactor the structure to fit the project's CSS conventions and design
+  system -- design tools often emit garbage that does not fit the setup, and
+  adapting it is expected. But preserve every value exactly so it renders
+  identically: do not round, drop, or alter spacing, sizes, colors, weights,
+  etc. Adapt the structure, keep the values.
+- If a design value conflicts with the design system (a token, a component, or
+  an existing convention), STOP and ask before deviating. Do not silently pick one.
+- If given only a screenshot (no source values), measure it -- do not eyeball
+  it. Extract exact pixel values, colors, and spacing from the image, or ask
+  for the source file if you cannot measure it reliably.
+- The bar: a screenshot of your implementation placed next to the design should
+  be indistinguishable from it. If you cannot hit that, say what is blocking it
+  instead of shipping an approximation.
+`.trim();
+
 function isOpenAiOrGptFamily(model: { provider: string; id: string }): boolean {
   const provider = model.provider.toLowerCase();
   const id = model.id.toLowerCase();
@@ -47,6 +70,10 @@ const RULES: Rule[] = [
   {
     match: (m) => m.provider.toLowerCase() === "anthropic" || isOpenAiOrGptFamily(m),
     text: CONCISE_STYLE_GUIDANCE,
+  },
+  {
+    match: () => true,
+    text: DESIGN_FIDELITY_GUIDANCE,
   },
   // Example: target a specific model id instead of a whole provider:
   // {
