@@ -14,7 +14,7 @@ update_brew()
   if [ "$(uname)" = "Darwin" ]; then
     log "homebrew"
     brew update
-    brew upgrade
+    brew upgrade --no-ask
     brew cleanup
   fi
 }
