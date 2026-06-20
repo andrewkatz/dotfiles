@@ -24,15 +24,27 @@ export ANDROID_HOME=~/Library/Android/sdk
 # Obj-C fork safety (Ruby/Rails on macOS)
 export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
 
-# Compiler flags for native gems against homebrew openjdk
-export CPPFLAGS="-I/opt/homebrew/opt/openjdk/include"
+# Java 21 (Eclipse Temurin)
+if [ -d "$HOME/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home" ]; then
+  export JAVA_HOME="$HOME/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home"
+elif [ -x /usr/libexec/java_home ]; then
+  _java_home_21="$(/usr/libexec/java_home -v 21 2>/dev/null)"
+  [ -n "$_java_home_21" ] && export JAVA_HOME="$_java_home_21"
+  unset _java_home_21
+fi
+
+# Drop stale Homebrew OpenJDK path if inherited from existing shells.
+path=(${path:#/opt/homebrew/opt/openjdk/bin})
+
+# Compiler flags for native gems against Java
+[ -n "$JAVA_HOME" ] && export CPPFLAGS="-I${JAVA_HOME}/include"
 
 # Claude Code's shell snapshots don't capture chpwd_functions, so zoxide's
 # doctor falsely warns on every cd. Silence it only inside Claude Code.
 [ -n "$CLAUDECODE" ] && export _ZO_DOCTOR=0
 
 # PATH: language toolchains and SDKs
-export PATH="/opt/homebrew/opt/openjdk/bin:$PATH"
+[ -n "$JAVA_HOME" ] && export PATH="$JAVA_HOME/bin:$PATH"
 export PATH="/opt/homebrew/opt/libpq/bin:$PATH"
 export PATH="/usr/local/opt/python/libexec/bin:$PATH"
 export PATH="/usr/local/opt/terraform@0.12/bin:$PATH"
