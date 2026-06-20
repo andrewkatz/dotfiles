@@ -23,6 +23,7 @@ DEFAULT_ENV_FILE = "~/.config/sentry-to-developerly.env"
 DEFAULT_SENTRY_BASE_URL = "https://sentry.io"
 DEFAULT_SENTRY_ASSIGNEE = "me"
 DEFAULT_SENTRY_QUERY = "is:unresolved"
+DEFAULT_SENTRY_REGRESSED_QUERY = "is:regressed"
 DEFAULT_SENTRY_ISSUE_LIMIT = 100
 DEFAULT_SENTRY_MAX_PAGES = 5
 DEFAULT_MAX_ISSUES_PER_RUN = 25
@@ -91,6 +92,13 @@ def env_int(env: dict[str, str], name: str, default: int) -> int:
     return int(value) if value else default
 
 
+def env_bool(env: dict[str, str], name: str, default: bool) -> bool:
+    value = env.get(name, "").strip().lower()
+    if not value:
+        return default
+    return value in {"1", "true", "yes", "on"}
+
+
 class Config:
     def __init__(self, env: dict[str, str], dry_run: bool) -> None:
         self.dry_run = dry_run
@@ -100,9 +108,12 @@ class Config:
         self.sentry_project_slugs = env_list(env, "SENTRY_PROJECT_SLUGS", "SENTRY_PROJECT_SLUG")
         self.sentry_assignee = env.get("SENTRY_ASSIGNEE", DEFAULT_SENTRY_ASSIGNEE).strip()
         self.sentry_query = env.get("SENTRY_QUERY", DEFAULT_SENTRY_QUERY).strip()
+        self.sentry_regressed_query = env.get("SENTRY_REGRESSED_QUERY", DEFAULT_SENTRY_REGRESSED_QUERY).strip()
         self.sentry_issue_limit = env_int(env, "SENTRY_ISSUE_LIMIT", DEFAULT_SENTRY_ISSUE_LIMIT)
         self.sentry_max_pages = env_int(env, "SENTRY_MAX_PAGES", DEFAULT_SENTRY_MAX_PAGES)
         self.max_issues_per_run = env_int(env, "SENTRY_MAX_ISSUES_PER_RUN", DEFAULT_MAX_ISSUES_PER_RUN)
+        self.handle_regressions = env_bool(env, "SENTRY_HANDLE_REGRESSIONS", True)
+        self.max_regressions_per_run = env_int(env, "SENTRY_MAX_REGRESSIONS_PER_RUN", DEFAULT_MAX_ISSUES_PER_RUN)
         self.description_max_chars = env_int(env, "SENTRY_DESCRIPTION_MAX_CHARS", DEFAULT_DESCRIPTION_MAX_CHARS)
         self.developerly_cli = env.get("DEVELOPERLY_CLI", default_developerly_cli()).strip()
         self.developerly_project = env.get("DEVELOPERLY_PROJECT", DEFAULT_DEVELOPERLY_PROJECT).strip()
@@ -196,7 +207,13 @@ class SentryToDeveloperly:
             processed = 0
             for project_slug in self.config.sentry_project_slugs:
                 processed += self.process_project(project_slug)
-            log("INFO", f"Finished Sentry → Developerly sync; processed={processed}")
+
+            regressions = 0
+            if self.config.handle_regressions:
+                for project_slug in self.config.sentry_project_slugs:
+                    regressions += self.process_regressions(project_slug)
+
+            log("INFO", f"Finished Sentry → Developerly sync; processed={processed} regressions={regressions}")
 
     def process_project(self, project_slug: str) -> int:
         issues = self.unassigned_open_issues(project_slug)
@@ -264,6 +281,110 @@ class SentryToDeveloperly:
         except Exception as error:  # noqa: BLE001 - task was created; do not duplicate on next run
             log("ERROR", f"Developerly task was created, but assigning {issue_label(issue)} failed: {error}")
         return True
+
+    def process_regressions(self, project_slug: str) -> int:
+        issues = self.regressed_issues(project_slug)
+        log("INFO", f"Found {len(issues)} regressed Sentry issue(s) in {project_slug}")
+        processed = 0
+        for issue in issues:
+            try:
+                if self.process_regression(project_slug, issue):
+                    processed += 1
+            except Exception as error:  # noqa: BLE001 - top-level batch isolation
+                log("ERROR", f"Regression {issue.get('id')} failed: {type(error).__name__} - {error}")
+                traceback.print_exc()
+        return processed
+
+    def regressed_issues(self, project_slug: str) -> list[dict[str, Any]]:
+        issues: list[dict[str, Any]] = []
+        response, headers = self.sentry.get(
+            f"/api/0/projects/{self.config.sentry_org_slug}/{project_slug}/issues/",
+            {
+                "query": self.config.sentry_regressed_query,
+                "limit": self.config.sentry_issue_limit,
+                "sort": "date",
+            },
+        )
+        pages_read = 1
+
+        while True:
+            issues.extend(issue for issue in response or [] if str(issue.get("substatus") or "") == "regressed")
+            if len(issues) >= self.config.max_regressions_per_run or pages_read >= self.config.sentry_max_pages:
+                break
+
+            next_url = self.next_page_url(headers.get("Link", ""))
+            if not next_url:
+                break
+            response, headers = self.sentry.get_url(next_url)
+            pages_read += 1
+
+        return issues[: self.config.max_regressions_per_run]
+
+    def process_regression(self, project_slug: str, issue: dict[str, Any]) -> bool:
+        detail = self.issue_detail(issue) or issue
+        regressed_at = latest_regression_at(detail)
+        if not regressed_at:
+            log("WARN", f"No set_regression activity for {issue_label(issue)}; skipping")
+            return False
+
+        record = self.state.get("issues", {}).get(str(issue.get("id")))
+        baseline = (record.get("last_regression_at") or record.get("processed_at")) if record else None
+        if baseline and regressed_at <= baseline:
+            return False
+
+        prior_task_id = record.get("task_id") if record else None
+        event = self.latest_event(issue)
+        description = SentryDescription(
+            detail,
+            event,
+            project_slug,
+            self.config.description_max_chars,
+            regressed_at=regressed_at,
+            prior_task_id=prior_task_id,
+        )
+
+        if self.config.dry_run:
+            log(
+                "INFO",
+                f"DRY RUN would create regression Developerly task in {self.config.developerly_project} "
+                f"for {issue_label(issue)} (regressed at {regressed_at}) titled {description.title()!r}",
+            )
+            return True
+
+        task = self.create_developerly_task(description.title(), description.body())
+        log(
+            "INFO",
+            f"Created regression Developerly task {task_id(task)} in {self.config.developerly_project} "
+            f"for {issue_label(issue)} (regressed at {regressed_at})",
+        )
+        self.record_regression(issue, task, regressed_at)
+        if detail.get("assignedTo") is None:
+            try:
+                self.assign_issue(issue)
+            except Exception as error:  # noqa: BLE001 - task was created; do not duplicate on next run
+                log("ERROR", f"Regression task was created, but assigning {issue_label(issue)} failed: {error}")
+        return True
+
+    def issue_detail(self, issue: dict[str, Any]) -> dict[str, Any]:
+        try:
+            detail, _headers = self.sentry.get(
+                f"/api/0/organizations/{self.config.sentry_org_slug}/issues/{issue['id']}/"
+            )
+            return detail or {}
+        except Exception as error:  # noqa: BLE001 - detail/activity is best-effort
+            log("WARN", f"Could not fetch Sentry issue detail for {issue_label(issue)}: {error}")
+            return {}
+
+    def record_regression(self, issue: dict[str, Any], task: Any, regressed_at: str) -> None:
+        issue_id = str(issue.get("id"))
+        record = self.state.setdefault("issues", {}).setdefault(issue_id, {})
+        record["short_id"] = issue.get("shortId")
+        record["last_regression_at"] = regressed_at
+        record["regression_processed_at"] = (
+            dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        )
+        record.setdefault("regression_task_ids", []).append(task_id(task))
+        self.save_state()
 
     def latest_event(self, issue: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -357,16 +478,30 @@ class SentryToDeveloperly:
 
 
 class SentryDescription:
-    def __init__(self, issue: dict[str, Any], event: dict[str, Any], project_slug: str, max_chars: int) -> None:
+    def __init__(
+        self,
+        issue: dict[str, Any],
+        event: dict[str, Any],
+        project_slug: str,
+        max_chars: int,
+        regressed_at: str | None = None,
+        prior_task_id: Any = None,
+    ) -> None:
         self.issue = issue
         self.event = event
         self.project_slug = project_slug
         self.max_chars = max_chars
+        self.regressed_at = regressed_at
+        self.prior_task_id = prior_task_id
 
     def title(self) -> str:
         raw = ": ".join(part for part in [self.issue.get("shortId"), self.issue_title()] if part)
-        prefix = "[Sentry] [BETA]" if self.beta_environment() else "[Sentry]"
-        title = f"{prefix} {raw}"
+        tags = ["[Sentry]"]
+        if self.regressed_at:
+            tags.append("[REGRESSION]")
+        if self.beta_environment():
+            tags.append("[BETA]")
+        title = f"{' '.join(tags)} {raw}"
         return title if len(title) <= 180 else f"{title[:179]}…"
 
     def beta_environment(self) -> bool:
@@ -387,6 +522,7 @@ class SentryDescription:
     def sections(self) -> list[str | None]:
         return [
             self.summary_section(),
+            self.regression_section(),
             self.exception_section(),
             self.stack_trace_section(),
             self.request_section(),
@@ -413,6 +549,18 @@ class SentryDescription:
             f"- **User count**: {self.issue.get('userCount')}",
             f"- **Culprit**: `{self.issue.get('culprit')}`",
         ]
+        return "\n".join(lines)
+
+    def regression_section(self) -> str | None:
+        if not self.regressed_at:
+            return None
+        lines = [
+            "## Regression",
+            "",
+            f"This Sentry issue **regressed** (was resolved, then started erroring again) at `{self.regressed_at}`.",
+        ]
+        if self.prior_task_id:
+            lines.append(f"Previously tracked as Developerly task `#{self.prior_task_id}`.")
         return "\n".join(lines)
 
     def exception_section(self) -> str | None:
@@ -580,6 +728,15 @@ def markdown_link(text: str, url: Any) -> str:
 
 def issue_label(issue: dict[str, Any]) -> Any:
     return issue.get("shortId") or issue.get("id")
+
+
+def latest_regression_at(issue: dict[str, Any]) -> str | None:
+    timestamps = [
+        entry.get("dateCreated")
+        for entry in issue.get("activity") or []
+        if isinstance(entry, dict) and entry.get("type") == "set_regression" and entry.get("dateCreated")
+    ]
+    return max(timestamps) if timestamps else None
 
 
 def task_id(task: Any) -> Any:

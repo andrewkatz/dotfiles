@@ -8,6 +8,16 @@ Creates a local Developerly task for each unassigned, unresolved Sentry issue, t
 - Only after the task is created is the Sentry issue assigned (`SENTRY_ASSIGNEE`, default `me`), which marks it processed on the Sentry side. A local state file (`~/.cache/sentry-to-developerly/processed.json`) also dedupes across runs.
 - A lock file prevents overlapping runs.
 
+## Regressions
+
+Assignment + the state file dedupe an issue forever, so a previously-resolved issue that starts erroring again (Sentry substatus `regressed`) would otherwise never be re-surfaced. A second pass each run handles this:
+
+- Polls `SENTRY_REGRESSED_QUERY` (default `is:regressed`) and reads each issue's `set_regression` activity timestamp.
+- Creates a fresh `[Sentry] [REGRESSION]` task (the `developerly` CLI has no reopen/comment), with the same rich body plus a Regression section linking back to the prior task.
+- Dedupes per regression *episode*: it fires only when the latest `set_regression` is newer than the issue's `last_regression_at` (or, on first encounter, its original `processed_at`). So re-runs don't duplicate, and an already-handled regression won't fire on first deploy.
+
+Set `SENTRY_HANDLE_REGRESSIONS="false"` to disable. Bound the per-run catch-up with `SENTRY_MAX_REGRESSIONS_PER_RUN` (default 25).
+
 ## Setup
 
 ```bash
