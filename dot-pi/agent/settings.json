@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.79.8",
+  "lastChangelogVersion": "0.79.10",
   "packages": [
     "npm:@benvargas/pi-firecrawl"
   ],

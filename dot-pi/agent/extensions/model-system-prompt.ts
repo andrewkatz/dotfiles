@@ -37,6 +37,17 @@ NO COMPLIMENTS / NO VALIDATION (override default style where it conflicts):
 - Match the user's brevity. Short question gets a short answer, not an essay.
 `.trim();
 
+// Time-zone instructions. Applied to every model so all reported times stay
+// consistent regardless of the underlying source timestamps.
+const TIMEZONE_GUIDANCE = `
+TIME ZONES:
+- Always express times in PST. This includes future events, schedules, debugging
+  timelines, log analysis, CI/build runs, deploys, and status updates.
+- When source data is in another zone (UTC, local machine time, server/log time),
+  convert it to PST before presenting it. Include the original timestamp only
+  when needed for traceability, after the PST time.
+`.trim();
+
 // Design-fidelity instructions. Applied to every model: matching a design
 // exactly is task behavior, not a per-model style quirk.
 const DESIGN_FIDELITY_GUIDANCE = `
@@ -70,6 +81,10 @@ const RULES: Rule[] = [
   {
     match: (m) => m.provider.toLowerCase() === "anthropic" || isOpenAiOrGptFamily(m),
     text: CONCISE_STYLE_GUIDANCE,
+  },
+  {
+    match: () => true,
+    text: TIMEZONE_GUIDANCE,
   },
   {
     match: () => true,

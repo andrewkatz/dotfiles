@@ -13,6 +13,11 @@ Each Bash poll round-trips its output into context and is discarded on the next 
 - Skip preambles like "Let me…" / "I'll now…" before tool calls. State the goal in one sentence, then call the tool.
 - No trailing summary on completed work — the diff is the summary.
 
+# Time zones
+
+- Always express times in PST. This includes future events, schedules, debugging timelines, log analysis, CI/build runs, deploys, and status updates.
+- When source data is in another zone (UTC, local machine time, server/log time), convert it to PST before presenting it. Include the original timestamp only when needed for traceability, after the PST time.
+
 # No compliments / No validation
 
 Override default style where it conflicts:
