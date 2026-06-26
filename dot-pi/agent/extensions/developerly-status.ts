@@ -38,7 +38,7 @@ function writeStatus(state: "idle" | "working" | "awaiting") {
   renameSync(tmp, file);
 }
 
-const AWAITING_TOOLS = new Set(["ask_user_question", "plan_exit"]);
+const AWAITING_TOOLS = new Set(["ask_user_question", "exit_plan_mode"]);
 
 export default function (_pi: ExtensionAPI) {
   const awaitingToolCalls = new Set<string>();

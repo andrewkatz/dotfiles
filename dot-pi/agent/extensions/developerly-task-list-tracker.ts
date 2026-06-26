@@ -27,7 +27,7 @@ type TaskSummary = {
   cancelled: number;
 };
 
-const TOOL_NAME = "todowrite";
+const TOOL_NAME = "update_task_list";
 const MAX_RENDERED_TASKS = 14;
 
 const TaskSchema = Type.Object({
@@ -113,6 +113,11 @@ function plainTaskList(todos: TaskItem[]): string {
       return `- [${todo.status}] ${todo.id}:${priority} ${todo.content}`;
     })
     .join("\n");
+}
+
+function hasOpenTasks(todos: TaskItem[]): boolean {
+  const summary = countTasks(todos);
+  return summary.pending > 0 || summary.inProgress > 0;
 }
 
 function summaryText(todos: TaskItem[]): string {
@@ -239,7 +244,7 @@ export default function taskListTracker(pi: ExtensionAPI) {
         maxHeight: "70%",
         margin: { top: 1, right: 1 },
         nonCapturing: true,
-        visible: (termWidth) => termWidth >= 100 && todos.length > 0,
+        visible: (termWidth) => termWidth >= 100 && hasOpenTasks(todos),
       },
       onHandle: (handle) => {
         hidePanel = () => handle.hide();
@@ -256,13 +261,15 @@ export default function taskListTracker(pi: ExtensionAPI) {
     if (!ctx?.hasUI) return;
     latestCtx = ctx;
 
-    if (todos.length > 0) {
-      const summary = countTasks(todos);
-      ctx.ui.setStatus("tasks", ctx.ui.theme.fg("accent", `tasks ${summary.completed}/${summary.total}`));
-      ensurePanel(ctx);
-    } else {
+    if (!hasOpenTasks(todos)) {
       ctx.ui.setStatus("tasks", undefined);
+      updatePanel();
+      return;
     }
+
+    const summary = countTasks(todos);
+    ctx.ui.setStatus("tasks", ctx.ui.theme.fg("accent", `tasks ${summary.completed}/${summary.total}`));
+    ensurePanel(ctx);
 
     updatePanel();
   }
@@ -287,11 +294,11 @@ export default function taskListTracker(pi: ExtensionAPI) {
     description: "Create or update the current task list for complex, multi-step work. Always send the complete current list.",
     promptSnippet: "Track complex multi-step work with a persistent task list shown in the Pi TUI",
     promptGuidelines: [
-      "Use todowrite for complex or multi-step work so progress stays visible in Pi's task panel.",
-      "Call todowrite before substantive edits on complex projects, then update it as tasks move from pending to in_progress to completed.",
-      "Keep exactly one todowrite item in_progress when actively working, unless the work is intentionally blocked or parallel.",
-      "Send the complete current todowrite list every time; use stable ids and concise task descriptions.",
-      "Do not use todowrite for trivial single-step requests where a task list would add noise.",
+      "Use update_task_list for complex or multi-step work so progress stays visible in Pi's task panel.",
+      "Call update_task_list before substantive edits on complex projects, then update it as tasks move from pending to in_progress to completed.",
+      "Keep exactly one task in_progress when actively working, unless the work is intentionally blocked or parallel.",
+      "Send the complete current task list every time; use stable ids and concise task descriptions.",
+      "Do not use update_task_list for trivial single-step requests where a task list would add noise.",
     ],
     parameters: TodoWriteParams,
 

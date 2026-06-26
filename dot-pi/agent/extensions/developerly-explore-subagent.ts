@@ -87,7 +87,7 @@ function finalAssistantText(messages: Message[]): string {
 
 function truncateOutput(text: string): string {
   if (text.length <= MAX_OUTPUT_CHARS) return text;
-  return `${text.slice(0, MAX_OUTPUT_CHARS)}\n\n[explore_subagent output truncated to ${MAX_OUTPUT_CHARS} chars]`;
+  return `${text.slice(0, MAX_OUTPUT_CHARS)}\n\n[explore_codebase output truncated to ${MAX_OUTPUT_CHARS} chars]`;
 }
 
 function describeToolStep(toolName: string, args: any): string {
@@ -284,7 +284,7 @@ async function runExploreSubagent(input: ExploreSubagentInput, defaultCwd: strin
       else signal?.addEventListener("abort", abort, { once: true });
     });
 
-    if (wasAborted) throw new Error("Explore subagent was aborted");
+    if (wasAborted) throw new Error("Explore codebase was aborted");
 
     return {
       exitCode,
@@ -363,17 +363,17 @@ async function mapWithConcurrencyLimit<T, R>(
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
-    name: "explore_subagent",
+    name: "explore_codebase",
     label: "Explore Subagent",
     description:
       "Delegate focused codebase exploration to a lower-cost, isolated, read-only Pi subagent. Use this to search/read broadly without filling the main context.",
     promptSnippet:
       "Delegate focused codebase exploration to a lower-cost isolated read-only subagent and receive a concise report.",
     promptGuidelines: [
-      "Use explore_subagent before implementation when you need to discover files, symbols, architecture, or behavior across a codebase.",
-      "Use explore_subagent instead of doing broad read/search loops in the main context; give it a focused task and rely on its concise report.",
+      "Use explore_codebase before implementation when you need to discover files, symbols, architecture, or behavior across a codebase.",
+      "Use explore_codebase instead of doing broad read/search loops in the main context; give it a focused task and rely on its concise report.",
       "For independent codebase questions, pass a tasks array so multiple explorers can run concurrently.",
-      "Do not use explore_subagent for edits or commands that need to change files; it is read-only.",
+      "Do not use explore_codebase for edits or commands that need to change files; it is read-only.",
     ],
     parameters: exploreSubagentSchema,
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
@@ -469,7 +469,7 @@ export default function (pi: ExtensionAPI) {
         const sections = completed.map((result) => {
           const heading = `## ${result.index + 1}. ${taskPreview(result.task)}`;
           if (result.exitCode === 0) return `${heading}\n${result.output}`;
-          return `${heading}\nExplore subagent failed with exit code ${result.exitCode}.\n\nSTDERR:\n${result.stderr}\n\nOutput:\n${result.output}`;
+          return `${heading}\nExplore codebase failed with exit code ${result.exitCode}.\n\nSTDERR:\n${result.stderr}\n\nOutput:\n${result.output}`;
         });
 
         return {
@@ -509,7 +509,7 @@ export default function (pi: ExtensionAPI) {
       });
       const text = result.exitCode === 0
         ? result.output
-        : `Explore subagent failed with exit code ${result.exitCode}.\n\nSTDERR:\n${result.stderr}\n\nOutput:\n${result.output}`;
+        : `Explore codebase failed with exit code ${result.exitCode}.\n\nSTDERR:\n${result.stderr}\n\nOutput:\n${result.output}`;
 
       return {
         content: [{ type: "text", text }],
@@ -529,7 +529,7 @@ export default function (pi: ExtensionAPI) {
         );
         if (args.tasks.length > 3) lines.push(`  ${theme.fg("muted", `... +${args.tasks.length - 3} more`)}`);
         return new Text(
-          `${theme.fg("toolTitle", theme.bold("explore_subagent"))} ${theme.fg("accent", `parallel (${args.tasks.length} tasks)`)} ${theme.fg("muted", args.model ?? "auto")}\n` +
+          `${theme.fg("toolTitle", theme.bold("explore_codebase"))} ${theme.fg("accent", `parallel (${args.tasks.length} tasks)`)} ${theme.fg("muted", args.model ?? "auto")}\n` +
             lines.join("\n"),
           0,
           0,
@@ -538,7 +538,7 @@ export default function (pi: ExtensionAPI) {
 
       const task = args.task ? taskPreview(args.task) : "...";
       return new Text(
-        `${theme.fg("toolTitle", theme.bold("explore_subagent"))} ${theme.fg("muted", args.model ?? "auto")}\n` +
+        `${theme.fg("toolTitle", theme.bold("explore_codebase"))} ${theme.fg("muted", args.model ?? "auto")}\n` +
           `  ${theme.fg("dim", task)}`,
         0,
         0,
@@ -551,17 +551,4 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand("explore", {
-    description: "Run the read-only explore subagent for a focused codebase question",
-    handler: async (args, ctx) => {
-      const task = args.trim();
-      if (!task) {
-        ctx.ui.notify("Usage: /explore <focused codebase question>", "error");
-        return;
-      }
-
-      const result = await runExploreSubagent({ task, model: resolveExploreModel(ctx.model) }, ctx.cwd, ctx.signal);
-      ctx.ui.notify(result.exitCode === 0 ? result.output : `Explore failed: ${result.stderr || result.output}`, result.exitCode === 0 ? "info" : "error");
-    },
-  });
 }

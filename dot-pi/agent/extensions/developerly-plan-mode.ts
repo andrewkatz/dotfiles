@@ -16,11 +16,9 @@ const READ_ONLY_TOOLS = new Set([
   "ls",
   "ask_user_question",
   "questionnaire",
-  "explore_subagent",
-  "firecrawl_scrape",
-  "firecrawl_map",
-  "firecrawl_search",
-  "plan_exit",
+  "explore_codebase",
+  "run_subagent",
+  "exit_plan_mode",
 ]);
 
 const WRITE_TOOLS = new Set([
@@ -29,8 +27,8 @@ const WRITE_TOOLS = new Set([
   "apply_patch",
   "monitor_command",
   "monitor_github_pr_checks",
-  "monitor_stop",
-  "todowrite",
+  "stop_monitor",
+  "update_task_list",
 ]);
 
 const ALWAYS_BLOCKED_BASH = [
@@ -185,6 +183,15 @@ function isSafeBash(command: string): boolean {
   return segments.length > 0 && segments.every((segment) => segment.length > 0 && isSafeSegment(segment));
 }
 
+function isReadOnlySubagent(input: unknown): boolean {
+  if (!input || typeof input !== "object") return true;
+  const params = input as { allowWriteTools?: unknown; tools?: unknown };
+  if (params.allowWriteTools === true) return false;
+  if (typeof params.tools !== "string" || params.tools.trim() === "") return true;
+  const readOnly = new Set(["read", "grep", "find", "ls"]);
+  return params.tools.split(",").map((tool) => tool.trim()).filter(Boolean).every((tool) => readOnly.has(tool));
+}
+
 export default function developerlyPlanMode(pi: ExtensionAPI): void {
   let planModeEnabled = false;
   let previousActiveTools: string[] | undefined;
@@ -218,7 +225,7 @@ export default function developerlyPlanMode(pi: ExtensionAPI): void {
   }
 
   function activeToolsWithoutPlanExit(): string[] {
-    return pi.getActiveTools().filter((tool) => tool !== "plan_exit");
+    return pi.getActiveTools().filter((tool) => tool !== "exit_plan_mode");
   }
 
   function enterPlanMode(ctx: ExtensionContext, notify = true): void {
@@ -228,7 +235,7 @@ export default function developerlyPlanMode(pi: ExtensionAPI): void {
     pi.setActiveTools(readOnlyTools());
     updateStatus(ctx);
     persistState();
-    if (notify && ctx.hasUI) ctx.ui.notify("Developerly plan mode enabled. Edits are blocked until plan_exit is approved.", "info");
+    if (notify && ctx.hasUI) ctx.ui.notify("Developerly plan mode enabled. Edits are blocked until exit_plan_mode is approved.", "info");
   }
 
   function exitPlanMode(ctx: ExtensionContext, notify = true): void {
@@ -236,7 +243,7 @@ export default function developerlyPlanMode(pi: ExtensionAPI): void {
     planModeEnabled = false;
     const restore = previousActiveTools && previousActiveTools.length > 0
       ? previousActiveTools
-      : pi.getAllTools().map((tool) => tool.name).filter((tool) => tool !== "plan_exit");
+      : pi.getAllTools().map((tool) => tool.name).filter((tool) => tool !== "exit_plan_mode");
     previousActiveTools = undefined;
     pi.setActiveTools(restore);
     updateStatus(ctx);
@@ -261,13 +268,13 @@ export default function developerlyPlanMode(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "plan_exit",
+    name: "exit_plan_mode",
     label: "Plan Exit",
     description: "Use when the implementation plan is complete and ready for user approval before switching out of read-only plan mode.",
     promptSnippet: "Ask the user to approve the completed plan and switch from plan mode to build mode",
     promptGuidelines: [
-      "Use plan_exit after presenting a complete implementation plan and resolving open questions.",
-      "Do not use plan_exit if requirements are still ambiguous; ask the user a clarifying question instead.",
+      "Use exit_plan_mode after presenting a complete implementation plan and resolving open questions.",
+      "Do not use exit_plan_mode if requirements are still ambiguous; ask the user a clarifying question instead.",
     ],
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, signal, _onUpdate, ctx) {
@@ -297,7 +304,7 @@ export default function developerlyPlanMode(pi: ExtensionAPI): void {
       return { content: [{ type: "text" as const, text: "User chose to stay in plan mode. Continue refining the plan." }] };
     },
     renderCall(_args, theme, _context) {
-      return new Text(theme.fg("toolTitle", theme.bold("plan_exit ")) + theme.fg("muted", "request approval"), 0, 0);
+      return new Text(theme.fg("toolTitle", theme.bold("exit_plan_mode ")) + theme.fg("muted", "request approval"), 0, 0);
     },
     renderResult(toolResult, _options, theme, _context) {
       const first = toolResult.content[0];
@@ -333,10 +340,10 @@ Hard restrictions:
 
 Planning workflow:
 1. Read project instructions and relevant code.
-2. Use explore_subagent when broader codebase discovery is useful.
+2. Use explore_codebase or read-only run_subagent calls when broader isolated discovery is useful.
 3. Identify the recommended implementation approach, critical files, tests/checks, risks, and open questions.
 4. Present a concise final plan in your response.
-5. End by either asking a necessary clarifying question or calling plan_exit to request approval. Do not ask for plan approval with ask_user_question; use plan_exit for approval.
+5. End by either asking a necessary clarifying question or calling exit_plan_mode to request approval. Do not ask for plan approval with ask_user_question; use exit_plan_mode for approval.
 </system-reminder>`,
         display: false,
       },
@@ -360,20 +367,26 @@ Planning workflow:
   pi.on("tool_call", async (event) => {
     if (!planModeEnabled) return;
 
-    if (event.toolName === "plan_exit") return;
+    if (event.toolName === "exit_plan_mode") return;
+    if (event.toolName === "run_subagent" && !isReadOnlySubagent(event.input)) {
+      return {
+        block: true,
+        reason: "Developerly plan mode blocked a write-capable run_subagent. Call exit_plan_mode and get approval before delegated write-capable work.",
+      };
+    }
     if (event.toolName === "bash") {
       const command = typeof event.input.command === "string" ? event.input.command : "";
       if (isSafeBash(command)) return;
       return {
         block: true,
-        reason: `Developerly plan mode blocked a non-read-only bash command. Ask for approval with plan_exit before making changes.\nCommand: ${command}`,
+        reason: `Developerly plan mode blocked a non-read-only bash command. Ask for approval with exit_plan_mode before making changes.\nCommand: ${command}`,
       };
     }
 
     if (WRITE_TOOLS.has(event.toolName) || !READ_ONLY_TOOLS.has(event.toolName)) {
       return {
         block: true,
-        reason: `Developerly plan mode blocked ${event.toolName}. Call plan_exit and get approval before making changes.`,
+        reason: `Developerly plan mode blocked ${event.toolName}. Call exit_plan_mode and get approval before making changes.`,
       };
     }
   });
@@ -391,7 +404,7 @@ Planning workflow:
 
     if (planModeEnabled) {
       pi.setActiveTools(readOnlyTools());
-    } else if (pi.getActiveTools().includes("plan_exit")) {
+    } else if (pi.getActiveTools().includes("exit_plan_mode")) {
       pi.setActiveTools(activeToolsWithoutPlanExit());
     }
     updateStatus(ctx);

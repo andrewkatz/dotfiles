@@ -416,7 +416,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "monitor_list",
+    name: "list_monitors",
     label: "List Monitors",
     description: "List active and recently completed monitors. Use only when the user asks for monitor status; do not poll repeatedly.",
     parameters: Type.Object({
@@ -429,7 +429,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "monitor_stop",
+    name: "stop_monitor",
     label: "Stop Monitor",
     description: "Stop a running monitor by id.",
     parameters: Type.Object({ id: Type.String({ description: "Monitor id, for example mon-1." }) }),
@@ -445,64 +445,6 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand("monitor", {
-    description: "Run a background command and wake Pi when it exits",
-    handler: async (args, ctx) => {
-      latestCtx = ctx;
-      const command = args.trim();
-      if (!command) {
-        ctx.ui.notify("Usage: /monitor <command>", "error");
-        return;
-      }
-      const monitor = startMonitor({ command, kind: "command", trigger: "exit", cwd: ctx.cwd });
-      ctx.ui.notify(`Started monitor ${monitor.id}: ${monitor.name}`, "info");
-    },
-  });
-
-  pi.registerCommand("monitor-pr", {
-    description: "Watch GitHub PR checks and wake Pi when they finish",
-    handler: async (args, ctx) => {
-      latestCtx = ctx;
-      const parts = args.trim().split(/\s+/).filter(Boolean);
-      const input: GithubPrChecksInput = {};
-      for (let i = 0; i < parts.length; i++) {
-        const part = parts[i];
-        if (part === "--repo") input.repo = parts[++i];
-        else if (part === "--required") input.requiredOnly = true;
-        else if (part === "--fail-fast") input.failFast = true;
-        else if (part === "--interval") input.intervalSeconds = Number(parts[++i]);
-        else input.pr = part;
-      }
-      const monitor = startGithubPrChecks(input, ctx);
-      ctx.ui.notify(`Started PR checks monitor ${monitor.id}: ${monitor.name}`, "info");
-    },
-  });
-
-  pi.registerCommand("monitors", {
-    description: "List monitors",
-    handler: async (_args, ctx) => {
-      latestCtx = ctx;
-      ctx.ui.notify(listText(false), "info");
-    },
-  });
-
-  pi.registerCommand("monitor-stop", {
-    description: "Stop a monitor by id",
-    handler: async (args, ctx) => {
-      latestCtx = ctx;
-      const id = args.trim();
-      const monitor = monitors.get(id);
-      if (!monitor) {
-        ctx.ui.notify(`Monitor ${id} not found`, "error");
-        return;
-      }
-      monitor.status = "cancelled";
-      monitor.completedAt = Date.now();
-      killMonitor(monitor);
-      renderStatus(ctx);
-      ctx.ui.notify(`Stopped monitor ${monitor.id}: ${monitor.name}`, "info");
-    },
-  });
 
   pi.on("session_start", (_event, ctx) => {
     latestCtx = ctx;
