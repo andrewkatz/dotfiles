@@ -111,6 +111,15 @@ function result(question: string, options: string[], answer: string | null, wasC
 }
 
 export default function askUserQuestion(pi: ExtensionAPI) {
+  let promptQueue: Promise<void> = Promise.resolve();
+  let queuedPrompts = 0;
+
+  function enqueuePrompt<T>(task: () => Promise<T>): Promise<T> {
+    const run = promptQueue.catch(() => undefined).then(task);
+    promptQueue = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
   pi.registerTool({
     name: "ask_user_question",
     label: "Ask User",
@@ -123,7 +132,7 @@ export default function askUserQuestion(pi: ExtensionAPI) {
     ],
     parameters: AskUserQuestionSchema,
 
-    async execute(_toolCallId, params: AskUserQuestionInput, signal, _onUpdate, ctx) {
+    async execute(_toolCallId, params: AskUserQuestionInput, signal, onUpdate, ctx) {
       const options = params.options ?? [];
       const optionLabels = options.map((option) => option.label);
       const allowCustomResponse = params.allowCustomResponse ?? options.length === 0;
@@ -141,35 +150,48 @@ export default function askUserQuestion(pi: ExtensionAPI) {
         };
       }
 
-      writePrompt(params, allowCustomResponse);
+      queuedPrompts += 1;
+      if (queuedPrompts > 1) {
+        onUpdate?.({ content: [{ type: "text" as const, text: `Queued ask_user_question behind ${queuedPrompts - 1} pending question${queuedPrompts === 2 ? "" : "s"}.` }] });
+      }
+
       try {
-        if (options.length === 0 || allowCustomResponse) {
-          if (options.length > 0) {
-            const customChoice = `${options.length + 1}. Type a custom response`;
-            const choices = [...options.map(optionDisplay), customChoice];
+        return await enqueuePrompt(async () => {
+          if (signal?.aborted) return result(params.question, optionLabels, null, false);
+
+          writePrompt(params, allowCustomResponse);
+          try {
+            if (options.length === 0 || allowCustomResponse) {
+              if (options.length > 0) {
+                const customChoice = `${options.length + 1}. Type a custom response`;
+                const choices = [...options.map(optionDisplay), customChoice];
+                const choice = await ctx.ui.select(params.question, choices, { signal });
+                if (!choice) return result(params.question, optionLabels, null, false);
+
+                const selectedIndex = choices.indexOf(choice);
+                if (selectedIndex >= 0 && selectedIndex < options.length) {
+                  return result(params.question, optionLabels, options[selectedIndex].label, false);
+                }
+              }
+
+              const answer = await ctx.ui.input(params.question, params.placeholder ?? "Type your answer...", { signal });
+              if (answer === undefined) return result(params.question, optionLabels, null, true);
+              return result(params.question, optionLabels, answer, true);
+            }
+
+            const choices = options.map(optionDisplay);
             const choice = await ctx.ui.select(params.question, choices, { signal });
             if (!choice) return result(params.question, optionLabels, null, false);
 
             const selectedIndex = choices.indexOf(choice);
-            if (selectedIndex >= 0 && selectedIndex < options.length) {
-              return result(params.question, optionLabels, options[selectedIndex].label, false);
-            }
+            const answer = selectedIndex >= 0 ? options[selectedIndex].label : choice;
+            return result(params.question, optionLabels, answer, false);
+          } finally {
+            clearPrompt();
           }
-
-          const answer = await ctx.ui.input(params.question, params.placeholder ?? "Type your answer...", { signal });
-          if (answer === undefined) return result(params.question, optionLabels, null, true);
-          return result(params.question, optionLabels, answer, true);
-        }
-
-        const choices = options.map(optionDisplay);
-        const choice = await ctx.ui.select(params.question, choices, { signal });
-        if (!choice) return result(params.question, optionLabels, null, false);
-
-        const selectedIndex = choices.indexOf(choice);
-        const answer = selectedIndex >= 0 ? options[selectedIndex].label : choice;
-        return result(params.question, optionLabels, answer, false);
+        });
       } finally {
-        clearPrompt();
+        queuedPrompts -= 1;
       }
     },
 
