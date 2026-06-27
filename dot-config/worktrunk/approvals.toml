@@ -18,6 +18,12 @@ mise trust
     "mise exec -- bin/setup --skip-server",
 ]
 
+[projects."github.com/getcomfortly/comfortly-prototype"]
+approved-commands = [
+    "mise trust",
+    "mise install && mise exec -- npm install",
+]
+
 [projects."github.com/getcomfortly/developerly"]
 approved-commands = [
     "mise trust",
@@ -129,4 +135,58 @@ EOF
 mise trust
 """,
     "mise exec -- docker-compose up -d --no-recreate ; sleep 2",
+    """
+    primary_mise="{{ primary_worktree_path }}/mise.local.toml"
+
+    primary_env_value() {
+      if [ -f "$primary_mise" ]; then
+        awk -F= -v key="$1" '
+          $1 ~ "^[[:space:]]*" key "[[:space:]]*$" {
+            value = $0
+            sub("^[^=]*=", "", value)
+            sub("^[[:space:]]*", "", value)
+            sub("[[:space:]]*$", "", value)
+            print value
+            exit
+          }
+        ' "$primary_mise"
+      fi
+    }
+
+    compose_project_name=$(primary_env_value COMPOSE_PROJECT_NAME)
+    database_port=$(primary_env_value DATABASE_PORT)
+    redis_port=$(primary_env_value REDIS_PORT)
+    mailhog_smtp_port=$(primary_env_value MAILHOG_SMTP_PORT)
+    mailhog_http_port=$(primary_env_value MAILHOG_HTTP_PORT)
+
+    compose_project_name=${compose_project_name:-'"via-platform"'}
+    database_port=${database_port:-24662}
+    redis_port=${redis_port:-52944}
+    mailhog_smtp_port=${mailhog_smtp_port:-53865}
+    mailhog_http_port=${mailhog_http_port:-26053}
+
+    cat > mise.local.toml <<EOF
+# Auto-generated for worktree: $next_num
+[env]
+PORT = {{ branch | hash_port }}
+WEB_PORT = {{ branch | hash_port }}
+COMPOSE_PROJECT_NAME = $compose_project_name
+DATABASE_PORT = $database_port
+REDIS_PORT = $redis_port
+MAILHOG_SMTP_PORT = $mailhog_smtp_port
+MAILHOG_HTTP_PORT = $mailhog_http_port
+PLATFORM_DATABASE_NAME = "app_dev_{{ branch | sanitize_db }}"
+CORE_DATABASE_NAME = "core_dev_{{ branch | sanitize_db }}"
+PLATFORM_TEST_DATABASE_NAME = "app_test_{{ branch | sanitize_db }}"
+CORE_TEST_DATABASE_NAME = "core_test_{{ branch | sanitize_db }}"
+REDIS_NAMESPACE = "via:{{ branch | sanitize_db }}"
+AWS_REGION = "us-west-2"
+AWS_DEFAULT_PROFILE = "p"
+SNOWFLAKE_DEV_SUFFIX = "ANDREW_{{ branch | sanitize_db }}"
+EOF
+
+    awk '/^[[:space:]]*KAMAL_SSH_PROXY_USER[[:space:]]*=/{ print; exit }' "$primary_mise" >> mise.local.toml 2>/dev/null || true
+
+mise trust
+""",
 ]
