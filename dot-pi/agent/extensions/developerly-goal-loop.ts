@@ -9,6 +9,8 @@ const STATUS_KEY = "developerly-goal-loop";
 const DEFAULT_MAX_ATTEMPTS = 5;
 const MAX_ATTEMPTS_LIMIT = 25;
 const DEFAULT_MAX_EVALUATOR_FAILURES = 3;
+const EVALUATOR_MAX_TRANSIENT_ATTEMPTS = 3;
+const EVALUATOR_RETRY_BASE_DELAY_MS = 1000;
 const EVALUATOR_TIMEOUT_MS = 2 * 60 * 1000;
 const EVALUATOR_OUTPUT_LIMIT = 20000;
 const SNAPSHOT_OUTPUT_LIMIT = 12000;
@@ -28,6 +30,8 @@ interface GoalEvaluation {
   nextInstruction?: string;
   rawOutput?: string;
   error?: string;
+  transient?: boolean;
+  retryCount?: number;
   exitCode?: number;
   durationMs: number;
   evaluatedAt: string;
@@ -235,10 +239,18 @@ export default function developerlyGoalLoop(pi: ExtensionAPI) {
       ...goal,
       lastAssistantText: trimText(assistantText, 4000),
       lastEvaluation: evaluation,
-      evaluatorFailures: evaluation.error ? goal.evaluatorFailures + 1 : 0,
+      evaluatorFailures: evaluation.error ? (evaluation.transient ? goal.evaluatorFailures : goal.evaluatorFailures + 1) : 0,
       updatedAt: new Date().toISOString(),
     };
     if (marker) updatedGoal.lastMarker = marker;
+
+    if (evaluation.error && evaluation.transient) {
+      activeGoal = updatedGoal;
+      persist("progress", updatedGoal, "transient evaluator failure");
+      updateStatus(ctx);
+      ctx.ui.notify(`Goal evaluator hit a transient connection error after ${(evaluation.retryCount ?? 0) + 1} attempt(s). Goal remains active and no continuation attempt was consumed: ${evaluation.error}`, "warning");
+      return;
+    }
 
     if (evaluation.error) {
       if (updatedGoal.evaluatorFailures >= DEFAULT_MAX_EVALUATOR_FAILURES) {
@@ -479,7 +491,6 @@ async function runGoalEvaluator(
   repoSnapshot: string,
   ctx: ExtensionContext,
 ): Promise<GoalEvaluation> {
-  const started = Date.now();
   const prompt = buildEvaluatorPrompt(goal, assistantText, marker, repoSnapshot);
   const args = [
     "--mode",
@@ -497,6 +508,34 @@ async function runGoalEvaluator(
   if (goal.evaluatorModel) args.splice(0, 0, "--model", goal.evaluatorModel);
 
   const invocation = getPiInvocation(args);
+  let lastTransientError: GoalEvaluation | undefined;
+
+  for (let attempt = 1; attempt <= EVALUATOR_MAX_TRANSIENT_ATTEMPTS; attempt++) {
+    const evaluation = await runGoalEvaluatorAttempt(invocation, ctx);
+    evaluation.retryCount = attempt - 1;
+
+    if (!evaluation.error || !isTransientEvaluatorError(evaluation.error, evaluation.rawOutput)) return evaluation;
+
+    lastTransientError = {
+      ...evaluation,
+      transient: true,
+      retryCount: attempt - 1,
+      reason: `${evaluation.error} (transient evaluator connection failure)`,
+    };
+
+    if (attempt < EVALUATOR_MAX_TRANSIENT_ATTEMPTS) {
+      await sleep(EVALUATOR_RETRY_BASE_DELAY_MS * attempt);
+    }
+  }
+
+  return lastTransientError ?? evaluatorError("transient evaluator failure", "", null, 0, new Date().toISOString(), { transient: true });
+}
+
+async function runGoalEvaluatorAttempt(
+  invocation: { command: string; args: string[] },
+  ctx: ExtensionContext,
+): Promise<GoalEvaluation> {
+  const started = Date.now();
   const child = spawn(invocation.command, invocation.args, {
     cwd: ctx.cwd,
     env: process.env,
@@ -505,6 +544,7 @@ async function runGoalEvaluator(
 
   let stdout = "";
   let stderr = "";
+  let spawnError = "";
   let timedOut = false;
   const timeout = setTimeout(() => {
     timedOut = true;
@@ -525,7 +565,10 @@ async function runGoalEvaluator(
 
   const exitCode = await new Promise<number | null>((resolve) => {
     child.on("close", (code) => resolve(code));
-    child.on("error", () => resolve(1));
+    child.on("error", (error) => {
+      spawnError = error instanceof Error ? error.message : String(error);
+      resolve(1);
+    });
   });
   clearTimeout(timeout);
 
@@ -537,7 +580,8 @@ async function runGoalEvaluator(
     return evaluatorError(`timed out after ${Math.round(EVALUATOR_TIMEOUT_MS / 1000)}s`, rawOutput, exitCode, durationMs, evaluatedAt);
   }
   if (exitCode !== 0) {
-    return evaluatorError(`exited ${exitCode}${stderr.trim() ? `: ${trimText(stderr.trim(), 1000)}` : ""}`, rawOutput, exitCode, durationMs, evaluatedAt);
+    const details = [stderr.trim(), spawnError].filter(Boolean).join("\n");
+    return evaluatorError(`exited ${exitCode}${details ? `: ${trimText(details, 1000)}` : ""}`, rawOutput, exitCode, durationMs, evaluatedAt);
   }
 
   const parsed = parseEvaluationJson(rawOutput);
@@ -563,17 +607,50 @@ function evaluatorError(
   exitCode: number | null,
   durationMs: number,
   evaluatedAt: string,
+  options: { transient?: boolean; retryCount?: number } = {},
 ): GoalEvaluation {
   return {
     status: "continue",
     confidence: "low",
     reason: error,
     error,
+    transient: options.transient,
+    retryCount: options.retryCount,
     rawOutput,
     exitCode: exitCode ?? undefined,
     durationMs,
     evaluatedAt,
   };
+}
+
+function isTransientEvaluatorError(error: string, rawOutput?: string): boolean {
+  const text = `${error}\n${rawOutput || ""}`.toLowerCase();
+  return [
+    "upstream connect error",
+    "disconnect/reset before headers",
+    "connection termination",
+    "connection reset",
+    "connection refused",
+    "econnreset",
+    "econnrefused",
+    "socket hang up",
+    "fetch failed",
+    "network error",
+    "temporarily unavailable",
+    "service unavailable",
+    "bad gateway",
+    "gateway timeout",
+    "http 502",
+    "http 503",
+    "http 504",
+    "status 502",
+    "status 503",
+    "status 504",
+  ].some((needle) => text.includes(needle));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function evaluatorSystemPrompt(): string {
@@ -794,9 +871,15 @@ function formatStatus(goal: GoalState): string {
     "",
     `Attempts: ${goal.attempts}/${goal.maxAttempts}.`,
     goal.evaluatorModel ? `Evaluator model: ${goal.evaluatorModel}.` : "Evaluator model: Pi default.",
-    goal.lastEvaluation ? `Last evaluator result: ${goal.lastEvaluation.status} (${goal.lastEvaluation.confidence}) - ${goal.lastEvaluation.reason}` : "Last evaluator result: none.",
+    goal.lastEvaluation ? formatEvaluationStatus(goal.lastEvaluation) : "Last evaluator result: none.",
     goal.lastMarker ? `Last worker marker: ${goal.lastMarker}.` : "Last worker marker: none.",
   ].join("\n");
+}
+
+function formatEvaluationStatus(evaluation: GoalEvaluation): string {
+  const attempts = evaluation.retryCount && evaluation.retryCount > 0 ? ` after ${evaluation.retryCount + 1} evaluator attempts` : "";
+  const transient = evaluation.transient ? " transient" : "";
+  return `Last evaluator result: ${evaluation.status}${transient} (${evaluation.confidence})${attempts} - ${evaluation.reason}`;
 }
 
 function oneLine(text: string): string {
