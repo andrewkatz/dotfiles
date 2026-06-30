@@ -106,7 +106,7 @@ alias ta='terraform apply'
 alias tp='terraform plan'
 
 # docker
-alias dcu='docker-compose up -d'
+alias dcu='docker-compose up -d --no-recreate'
 alias dcd='docker-compose down'
 
 # misc cli tools
