@@ -13,7 +13,9 @@
 #   permission_request → awaiting  (claude is blocked on user input)
 #   stop               → idle      (turn finished)
 #   session_end        → idle      (session finished; clears markers)
-#   notification       → awaiting only for explicit prompt notifications
+#   notification       → awaiting only for explicit prompt notifications;
+#                        otherwise reconciles background markers without
+#                        changing state
 #
 # Background-work markers (so a parked agent doesn't read as idle):
 #
@@ -23,11 +25,13 @@
 #   post_tool_use TaskStop   → rm    <session>.shells.d/<task_id>  (fast-path)
 #
 # Claude Code fires NO hook when a background shell exits, so markers are
-# reconciled against the session transcript on `stop` (subagents also on
-# subagent_stop) — the transcript is the source of truth. A shell is done once
-# the transcript carries a <task-notification> for it (<task-id>ID</task-id>,
+# reconciled against the session transcript on `stop` and idle notifications
+# (subagents also on subagent_stop) — the transcript is the source of truth. A
+# shell is done once the transcript carries a <task-notification> for it
+# (<task-id>ID</task-id>,
 # any terminal status — completed/failed/killed/stopped); a subagent is done
-# once its launching tool_use_id appears in a tool_result ("tool_use_id":"ID").
+# once its completion task-notification mentions the launching tool_use_id
+# (<tool-use-id>ID</tool-use-id>).
 # The user_prompt_submit wipe of <session>.subagents.d and session start/end
 # clearing remain backstops.
 #
@@ -207,9 +211,10 @@ case "$event" in
         prompt_action="keep"
         # SubagentStop's payload carries agent_id, not the launching
         # tool_use_id we keyed the marker by, so prune against the transcript
-        # instead: a finished subagent has a tool_result for its tool_use_id.
+        # instead: a finished subagent has a task-notification for its
+        # tool_use_id.
         transcript=$(json_string_field "transcript_path")
-        prune_completed_markers "$subagents_dir" "$transcript" '"tool_use_id":"' '"'
+        prune_completed_markers "$subagents_dir" "$transcript" '<tool-use-id>' '</tool-use-id>'
         ;;
     stop)
         state="idle"
@@ -220,7 +225,7 @@ case "$event" in
         # re-invokes the agent — is the authoritative cleanup.
         transcript=$(json_string_field "transcript_path")
         prune_completed_markers "$shells_dir" "$transcript" '<task-id>' '</task-id>'
-        prune_completed_markers "$subagents_dir" "$transcript" '"tool_use_id":"' '"'
+        prune_completed_markers "$subagents_dir" "$transcript" '<tool-use-id>' '</tool-use-id>'
         ;;
     session_end)
         state="idle"
@@ -229,6 +234,12 @@ case "$event" in
         fi
         ;;
     notification)
+        # Idle/background notifications can be the only event after async work
+        # finishes, so reconcile markers before deciding whether this
+        # notification changes the visible base state.
+        transcript=$(json_string_field "transcript_path")
+        prune_completed_markers "$shells_dir" "$transcript" '<task-id>' '</task-id>'
+        prune_completed_markers "$subagents_dir" "$transcript" '<tool-use-id>' '</tool-use-id>'
         notification_type=$(json_string_field "notification_type")
         case "$notification_type" in
             permission_prompt|question_prompt|input_prompt|user_input)
