@@ -212,16 +212,6 @@
         ]
       }
     ],
-    "TaskCompleted": [
-      {
-        "hooks": [
-          {
-            "command": "~/.claude/hooks/developerly-status.sh task_completed",
-            "type": "command"
-          }
-        ]
-      }
-    ],
     "UserPromptSubmit": [
       {
         "hooks": [

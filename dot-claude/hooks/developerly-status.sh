@@ -18,10 +18,18 @@
 # Background-work markers (so a parked agent doesn't read as idle):
 #
 #   pre_tool_use Agent/Task  → touch <session>.subagents.d/<tool_use_id>
-#   subagent_stop            → rm    <session>.subagents.d/<tool_use_id>
 #   post_tool_use Bash w/    → touch <session>.shells.d/<backgroundTaskId>
 #     run_in_background:true
-#   task_completed           → rm    <session>.shells.d/<task id>
+#   post_tool_use TaskStop   → rm    <session>.shells.d/<task_id>  (fast-path)
+#
+# Claude Code fires NO hook when a background shell exits, so markers are
+# reconciled against the session transcript on `stop` (subagents also on
+# subagent_stop) — the transcript is the source of truth. A shell is done once
+# the transcript carries a <task-notification> for it (<task-id>ID</task-id>,
+# any terminal status — completed/failed/killed/stopped); a subagent is done
+# once its launching tool_use_id appears in a tool_result ("tool_use_id":"ID").
+# The user_prompt_submit wipe of <session>.subagents.d and session start/end
+# clearing remain backstops.
 #
 # A non-empty <session>.subagents.d overlays idle/unknown as working; a
 # non-empty <session>.shells.d overlays it as the distinct "shell" state
@@ -66,10 +74,19 @@ fi
 # Every invocation appends one line. Useful for debugging "why didn't
 # my Notification fire?" — tail -f this file while interacting with
 # claude. Format: ts \t event \t session \t stdin (newlines stripped).
+# The payload is truncated and the file is capped so a busy session can't
+# grow it without bound (single tool inputs/outputs can be megabytes). The
+# truncation is log-only — parsing below always uses the full $stdin_payload.
 ts=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-flat_payload=$(printf '%s' "$stdin_payload" | tr '\n' ' ' | tr -s ' ')
+flat_payload=$(printf '%s' "$stdin_payload" | tr '\n' ' ' | tr -s ' ' | cut -c1-300)
 printf '%s\tevent=%s\tsession=%s\tpane=%s\tstdin=%s\n' \
     "$ts" "$event" "$session" "$pane" "$flat_payload" >> "$log"
+# Cap the log: once it passes ~5 MB, keep only the last 1000 lines.
+log_bytes=$(wc -c < "$log" 2>/dev/null | tr -dc '0-9')
+[ -n "$log_bytes" ] || log_bytes=0
+if [ "$log_bytes" -gt 5242880 ]; then
+    tail -n 1000 "$log" > "$log.tmp.$$" 2>/dev/null && mv "$log.tmp.$$" "$log" || rm -f "$log.tmp.$$"
+fi
 
 # json_string_field returns the FIRST string value for key. Good for
 # tool_name, which precedes the (potentially huge) tool_input.
@@ -90,6 +107,29 @@ json_last_string_field() {
 # json_bool_true is true when key is set to the JSON boolean true.
 json_bool_true() {
     printf '%s' "$stdin_payload" | grep -qE '"'"$1"'"[[:space:]]*:[[:space:]]*true'
+}
+
+# prune_completed_markers removes marker files in marker_dir whose id no longer
+# corresponds to live background work, using the session transcript as the
+# source of truth (Claude Code fires no hook when a background shell exits). A
+# marker is stale once the transcript contains needle_prefix<id>needle_suffix:
+# for shells the <task-notification> tag <task-id>ID</task-id> (matches any
+# terminal status), for subagents the completing tool_result's
+# "tool_use_id":"ID". The transcript is read only when the dir has markers.
+prune_completed_markers() {
+    marker_dir="$1"
+    transcript="$2"
+    needle_prefix="$3"
+    needle_suffix="$4"
+    [ -n "$marker_dir" ] && [ -d "$marker_dir" ] || return 0
+    [ -n "$transcript" ] && [ -f "$transcript" ] || return 0
+    for marker in "$marker_dir"/*; do
+        [ -e "$marker" ] || continue
+        id=$(basename "$marker")
+        if grep -Fq "$needle_prefix$id$needle_suffix" "$transcript"; then
+            rm -f "$marker"
+        fi
+    done
 }
 
 # Marker directories live next to the state file. Resolved only when we
@@ -147,6 +187,15 @@ case "$event" in
                 : > "$shells_dir/$task_id"
             fi
         fi
+        # Background shell killed — TaskStop stops a background task by id, and
+        # task_id equals the backgroundTaskId we keyed the marker by. Drop it
+        # immediately rather than waiting for the next idle's transcript sweep.
+        if [ "$event" = "post_tool_use" ] && [ "$tool_name" = "TaskStop" ]; then
+            stop_id=$(json_last_string_field "task_id")
+            if [ -n "$shells_dir" ] && [ -n "$stop_id" ]; then
+                rm -f "$shells_dir/$stop_id"
+            fi
+        fi
         ;;
     permission_request)
         state="awaiting"
@@ -156,22 +205,22 @@ case "$event" in
         ;;
     subagent_stop)
         prompt_action="keep"
-        id=$(json_last_string_field "tool_use_id")
-        if [ -n "$subagents_dir" ] && [ -n "$id" ]; then
-            rm -f "$subagents_dir/$id"
-        fi
-        ;;
-    task_completed)
-        prompt_action="keep"
-        task_id=$(json_last_string_field "backgroundTaskId")
-        [ -z "$task_id" ] && task_id=$(json_last_string_field "task_id")
-        [ -z "$task_id" ] && task_id=$(json_last_string_field "id")
-        if [ -n "$shells_dir" ] && [ -n "$task_id" ]; then
-            rm -f "$shells_dir/$task_id"
-        fi
+        # SubagentStop's payload carries agent_id, not the launching
+        # tool_use_id we keyed the marker by, so prune against the transcript
+        # instead: a finished subagent has a tool_result for its tool_use_id.
+        transcript=$(json_string_field "transcript_path")
+        prune_completed_markers "$subagents_dir" "$transcript" '"tool_use_id":"' '"'
         ;;
     stop)
         state="idle"
+        # The agent has parked. Reconcile background-work markers against the
+        # transcript so a shell/subagent that already finished doesn't pin the
+        # row to shell/working. Claude fires no hook on background-shell exit,
+        # so this stop-time sweep — always reached after a completion
+        # re-invokes the agent — is the authoritative cleanup.
+        transcript=$(json_string_field "transcript_path")
+        prune_completed_markers "$shells_dir" "$transcript" '<task-id>' '</task-id>'
+        prune_completed_markers "$subagents_dir" "$transcript" '"tool_use_id":"' '"'
         ;;
     session_end)
         state="idle"
@@ -211,8 +260,8 @@ case "$prompt_action" in
         ;;
 esac
 
-# Marker-only events (subagent_stop, task_completed) leave the base state
-# alone — they don't imply the agent is working or idle.
+# Marker-only events (subagent_stop) leave the base state alone — they don't
+# imply the agent is working or idle.
 if [ -n "$state" ]; then
     printf '%s' "$state" > "$dir/$file.tmp.$$"
     mv "$dir/$file.tmp.$$" "$dir/$file"
