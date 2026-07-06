@@ -189,4 +189,41 @@ EOF
 
 mise trust
 """,
+    """
+    primary_mise="{{ primary_worktree_path }}/mise.local.toml"
+
+    # Shared dev services (mysql/redis/mailhog) run as ONE docker-compose stack
+    # named via-platform and reused by every worktree. These host ports are fixed
+    # constants that match that stack's published ports. They are intentionally
+    # NOT sourced from the primary worktree's mise.local.toml: a one-off override
+    # there (e.g. pointing the primary at a local Homebrew MySQL on 3306) would
+    # otherwise leak into every new worktree and point it at the wrong database
+    # server. Per-worktree isolation comes from the database names + redis
+    # namespace below, not from ports.
+    cat > mise.local.toml <<EOF
+# Auto-generated for worktree: $next_num
+[env]
+PORT = {{ branch | hash_port }}
+WEB_PORT = {{ branch | hash_port }}
+COMPOSE_PROJECT_NAME = "via-platform"
+DATABASE_PORT = 24662
+REDIS_PORT = 52944
+MAILHOG_SMTP_PORT = 53865
+MAILHOG_HTTP_PORT = 26053
+PLATFORM_DATABASE_NAME = "app_dev_{{ branch | sanitize_db }}"
+CORE_DATABASE_NAME = "core_dev_{{ branch | sanitize_db }}"
+PLATFORM_TEST_DATABASE_NAME = "app_test_{{ branch | sanitize_db }}"
+CORE_TEST_DATABASE_NAME = "core_test_{{ branch | sanitize_db }}"
+REDIS_NAMESPACE = "via:{{ branch | sanitize_db }}"
+AWS_REGION = "us-west-2"
+AWS_DEFAULT_PROFILE = "p"
+SNOWFLAKE_DEV_SUFFIX = "ANDREW_{{ branch | sanitize_db }}"
+EOF
+
+    # KAMAL_SSH_PROXY_USER is genuinely per-developer, so inherit it from the
+    # primary worktree when present.
+    awk '/^[[:space:]]*KAMAL_SSH_PROXY_USER[[:space:]]*=/{ print; exit }' "$primary_mise" >> mise.local.toml 2>/dev/null || true
+
+mise trust
+""",
 ]

@@ -116,6 +116,9 @@ alias pm='open -a "Pixelmator Pro"'
 # web + dev shortcuts
 alias wd='web ; dev'
 
+# developerly
+alias dt='developerly tui'
+
 # tmux
 function tm() {
   if ! tmux has-session 2>/dev/null; then
