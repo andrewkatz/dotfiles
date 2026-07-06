@@ -6,6 +6,7 @@ default_planning_mode = false
 theme = "carbon-fox"
 root_session = "developerly"
 root_session_tui = false
+quick_actions = ["/ship", "/qa", "/quit"]
 
 [keys]
   assign_epic = ["a"]
