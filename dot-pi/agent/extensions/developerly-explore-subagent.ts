@@ -72,14 +72,27 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
   return { command: "pi", args };
 }
 
+function modelArgs(model: string): string[] {
+  const separator = model.indexOf("/");
+  if (separator <= 0 || separator === model.length - 1) return ["--model", model];
+
+  const provider = model.slice(0, separator);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(provider)) return ["--model", model];
+
+  return ["--provider", provider, "--model", model.slice(separator + 1)];
+}
+
 function finalAssistantText(messages: Message[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i];
     if (message.role !== "assistant") continue;
 
     for (const part of message.content) {
-      if (part.type === "text") return part.text.trim();
+      if (part.type === "text" && part.text.trim()) return part.text.trim();
     }
+
+    const errorMessage = (message as Message & { errorMessage?: unknown }).errorMessage;
+    if (typeof errorMessage === "string" && errorMessage.trim()) return errorMessage.trim();
   }
 
   return "";
@@ -181,7 +194,7 @@ async function runExploreSubagent(input: ExploreSubagentInput, defaultCwd: strin
     "--no-prompt-templates",
     "--no-themes",
     "--no-context-files",
-    "--model", model,
+    ...modelArgs(model),
     "--thinking", "minimal",
     "--tools", READ_ONLY_TOOLS,
     "--system-prompt", promptPath,

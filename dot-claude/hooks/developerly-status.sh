@@ -3,37 +3,48 @@
 # claude via ~/.claude/settings.json so each event fires this script with
 # a single argument indicating what just happened:
 #
-#   pre_tool_use       → working   (claude is actively doing things)
-#                        awaiting when the tool is AskUserQuestion — the
-#                        raw payload is also saved to <session>.prompt so
-#                        the mobile web view can render the options
-#   post_tool_use      → working   (claude is still in an active turn)
-#   post_tool_failure  → working   (claude is still in an active turn)
-#   user_prompt_submit → working   (the user answered; claude can resume)
-#   permission_request → awaiting  (claude is blocked on user input)
-#   stop               → idle      (turn finished)
-#   session_end        → idle      (session finished; clears markers)
-#   notification       → awaiting only for explicit prompt notifications;
-#                        otherwise reconciles background markers without
-#                        changing state
+#   pre_tool_use         → working   (claude is actively doing things)
+#                          awaiting when the tool is AskUserQuestion — the
+#                          raw payload is also saved to <session>.prompt so
+#                          the mobile web view can render the options
+#   post_tool_use        → working   (claude is still in an active turn)
+#   post_tool_failure    → working   (claude is still in an active turn)
+#   user_prompt_submit   → working   (the user answered; claude can resume)
+#   permission_request   → awaiting  (claude is blocked on user input)
+#   stop                 → idle      (turn finished)
+#   session_end          → idle      (session finished; clears markers)
+#   notification_awaiting→ awaiting  (a permission/needs-input prompt fired)
+#   notification_idle    → (no state change; reconciles background markers)
+#
+# The notification kind is selected by the settings.json *matcher*, not a
+# payload field: hooks.go registers Notification with matcher permission_prompt
+# / agent_needs_input → notification_awaiting and idle_prompt / agent_completed
+# → notification_idle. (The old notification_type payload field does not exist.)
+#
+# Sticky awaiting (so a parallel tool's post_tool_use can't clobber a real
+# block): AskUserQuestion / permission_request / notification_awaiting also
+# touch <session>.awaiting.d/<key> (keyed by tool_name, or "notification").
+# post_tool_use / post_tool_failure clear the completing tool's key; a new turn
+# (user_prompt_submit) or turn/session end (stop/session_end) wipe the dir. A
+# non-empty <session>.awaiting.d overlays any working/idle base as awaiting.
 #
 # Background-work markers (so a parked agent doesn't read as idle):
 #
-#   pre_tool_use Agent/Task  → touch <session>.subagents.d/<tool_use_id>
+#   post_tool_use Agent/Task → touch <session>.subagents.d/<agentId>
+#     (isAsync launch only)     the async launch's tool_response carries
+#                               "isAsync":true and "agentId":"…"
 #   post_tool_use Bash w/    → touch <session>.shells.d/<backgroundTaskId>
 #     run_in_background:true
 #   post_tool_use TaskStop   → rm    <session>.shells.d/<task_id>  (fast-path)
 #
-# Claude Code fires NO hook when a background shell exits, so markers are
-# reconciled against the session transcript on `stop` and idle notifications
-# (subagents also on subagent_stop) — the transcript is the source of truth. A
-# shell is done once the transcript carries a <task-notification> for it
-# (<task-id>ID</task-id>,
-# any terminal status — completed/failed/killed/stopped); a subagent is done
-# once its completion task-notification mentions the launching tool_use_id
-# (<tool-use-id>ID</tool-use-id>).
-# The user_prompt_submit wipe of <session>.subagents.d and session start/end
-# clearing remain backstops.
+# Claude Code fires NO hook when a background shell/subagent exits, so markers
+# are reconciled against the session transcript on `stop` and idle
+# notifications (subagents also on subagent_stop) — the transcript is the
+# source of truth. Both a shell and an async subagent are done once the
+# transcript carries a <task-notification> for the id (<task-id>ID</task-id>,
+# any terminal status — completed/failed/killed/stopped); <task-id> equals the
+# subagent's launch agentId. The user_prompt_submit wipe of
+# <session>.subagents.d and session start/end clearing remain backstops.
 #
 # A non-empty <session>.subagents.d overlays idle/unknown as working; a
 # non-empty <session>.shells.d overlays it as the distinct "shell" state
@@ -41,10 +52,6 @@
 # cli/internal/tui/status/status.go readStateFromDir. Marker files are keyed
 # by unique ids and only ever touched/removed, so concurrent hook processes
 # (parallel tool calls) never race.
-#
-# This follows Superset's lifecycle model: user prompts start work,
-# permission/question prompts block, and generic idle notifications do not
-# imply that an agent is awaiting user input.
 #
 # The state file is written atomically to
 # $XDG_CACHE_HOME/developerly/status/<session> (defaults to
@@ -81,8 +88,17 @@ fi
 # The payload is truncated and the file is capped so a busy session can't
 # grow it without bound (single tool inputs/outputs can be megabytes). The
 # truncation is log-only — parsing below always uses the full $stdin_payload.
+# The cap is 4000 (not a few hundred): the session_id + transcript_path + cwd
+# prefix alone is ~300 chars, so a smaller cap hides every discriminating field
+# (tool_name, agentId, notification message) and makes this log useless for
+# diagnosis. Set DEVELOPERLY_HOOK_DEBUG=1 to also append untruncated payloads to
+# hook.debug.log for a one-off deep dive.
 ts=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-flat_payload=$(printf '%s' "$stdin_payload" | tr '\n' ' ' | tr -s ' ' | cut -c1-300)
+flat_payload=$(printf '%s' "$stdin_payload" | tr '\n' ' ' | tr -s ' ' | cut -c1-4000)
+if [ "${DEVELOPERLY_HOOK_DEBUG:-}" = "1" ]; then
+    printf '%s\tevent=%s\tsession=%s\tstdin=%s\n' \
+        "$ts" "$event" "$session" "$stdin_payload" >> "$dir/hook.debug.log"
+fi
 printf '%s\tevent=%s\tsession=%s\tpane=%s\tstdin=%s\n' \
     "$ts" "$event" "$session" "$pane" "$flat_payload" >> "$log"
 # Cap the log: once it passes ~5 MB, keep only the last 1000 lines.
@@ -136,15 +152,39 @@ prune_completed_markers() {
     done
 }
 
+# awaiting_key sanitizes a tool name into a marker filename (strip slashes so
+# an MCP-style name can't escape the awaiting.d directory).
+awaiting_key() {
+    printf '%s' "$1" | tr '/' '_'
+}
+
+# set_awaiting / clear_awaiting manage sticky awaiting markers. A non-empty
+# <session>.awaiting.d overlays the base state as awaiting (see status.go
+# readStateFromDir), so a parallel tool's post_tool_use → working can't clobber
+# a genuine block while the prompt is still up.
+set_awaiting() {
+    key=$(awaiting_key "$1")
+    [ -n "$awaiting_dir" ] && [ -n "$key" ] || return 0
+    mkdir -p "$awaiting_dir"
+    : > "$awaiting_dir/$key"
+}
+clear_awaiting() {
+    key=$(awaiting_key "$1")
+    [ -n "$awaiting_dir" ] && [ -n "$key" ] || return 0
+    rm -f "$awaiting_dir/$key"
+}
+
 # Marker directories live next to the state file. Resolved only when we
 # know the session (otherwise this run is a no-op anyway).
 file=""
 subagents_dir=""
 shells_dir=""
+awaiting_dir=""
 if [ -n "$session" ]; then
     file=$(printf '%s' "$session" | tr '/' '_')
     subagents_dir="$dir/$file.subagents.d"
     shells_dir="$dir/$file.shells.d"
+    awaiting_dir="$dir/$file.awaiting.d"
 fi
 
 # prompt_action manages the sibling <session>.prompt file the mobile web
@@ -163,20 +203,27 @@ case "$event" in
         state="working"
         # A new user turn means any prior async subagents have finished and
         # re-invoked us — drop their markers so a missed subagent_stop can't
-        # pin the row to working. Background shells are left alone: a server
-        # legitimately outlives the turn that launched it.
-        if [ "$event" = "user_prompt_submit" ] && [ -n "$subagents_dir" ]; then
-            rm -rf "$subagents_dir"
+        # pin the row to working, and drop any awaiting markers (the user just
+        # answered). Background shells are left alone: a server legitimately
+        # outlives the turn that launched it.
+        if [ "$event" = "user_prompt_submit" ]; then
+            [ -n "$subagents_dir" ] && rm -rf "$subagents_dir"
+            [ -n "$awaiting_dir" ] && rm -rf "$awaiting_dir"
         fi
         tool_name=$(json_string_field "tool_name")
         if [ "$event" = "pre_tool_use" ] && [ "$tool_name" = "AskUserQuestion" ]; then
             state="awaiting"
             prompt_action="write"
+            set_awaiting "$tool_name"
         fi
-        # Subagent launch — track it as outstanding until subagent_stop so
-        # the row stays working through gaps in the subagent's activity.
-        if [ "$event" = "pre_tool_use" ] && { [ "$tool_name" = "Agent" ] || [ "$tool_name" = "Task" ]; }; then
-            id=$(json_last_string_field "tool_use_id")
+        # Async subagent launch — the Agent/Task tool payload has no top-level
+        # tool_use_id, but the async launch's tool_response carries
+        # "isAsync":true and "agentId":"…". Key the marker by agentId (the same
+        # id that appears as <task-id> in the completion task-notification) so
+        # an async subagent keeps the row working after the launching turn ends.
+        # Synchronous subagents block the turn, so they need no marker.
+        if [ "$event" = "post_tool_use" ] && { [ "$tool_name" = "Agent" ] || [ "$tool_name" = "Task" ]; } && json_bool_true "isAsync"; then
+            id=$(json_last_string_field "agentId")
             if [ -n "$subagents_dir" ] && [ -n "$id" ]; then
                 mkdir -p "$subagents_dir"
                 : > "$subagents_dir/$id"
@@ -200,21 +247,26 @@ case "$event" in
                 rm -f "$shells_dir/$stop_id"
             fi
         fi
+        # A tool completing (or failing) resolves any awaiting prompt it raised.
+        if [ "$event" = "post_tool_use" ] || [ "$event" = "post_tool_failure" ]; then
+            clear_awaiting "$tool_name"
+        fi
         ;;
     permission_request)
         state="awaiting"
-        if [ "$(json_string_field "tool_name")" = "AskUserQuestion" ]; then
+        tool_name=$(json_string_field "tool_name")
+        set_awaiting "$tool_name"
+        if [ "$tool_name" = "AskUserQuestion" ]; then
             prompt_action="write"
         fi
         ;;
     subagent_stop)
         prompt_action="keep"
-        # SubagentStop's payload carries agent_id, not the launching
-        # tool_use_id we keyed the marker by, so prune against the transcript
-        # instead: a finished subagent has a task-notification for its
-        # tool_use_id.
+        # SubagentStop carries no launch id, so prune against the transcript:
+        # a finished subagent has a <task-notification> whose <task-id> equals
+        # the launch agentId we keyed the marker by.
         transcript=$(json_string_field "transcript_path")
-        prune_completed_markers "$subagents_dir" "$transcript" '<tool-use-id>' '</tool-use-id>'
+        prune_completed_markers "$subagents_dir" "$transcript" '<task-id>' '</task-id>'
         ;;
     stop)
         state="idle"
@@ -222,34 +274,39 @@ case "$event" in
         # transcript so a shell/subagent that already finished doesn't pin the
         # row to shell/working. Claude fires no hook on background-shell exit,
         # so this stop-time sweep — always reached after a completion
-        # re-invokes the agent — is the authoritative cleanup.
+        # re-invokes the agent — is the authoritative cleanup. The turn ended,
+        # so any awaiting prompt is resolved too.
         transcript=$(json_string_field "transcript_path")
         prune_completed_markers "$shells_dir" "$transcript" '<task-id>' '</task-id>'
-        prune_completed_markers "$subagents_dir" "$transcript" '<tool-use-id>' '</tool-use-id>'
+        prune_completed_markers "$subagents_dir" "$transcript" '<task-id>' '</task-id>'
+        [ -n "$awaiting_dir" ] && rm -rf "$awaiting_dir"
         ;;
     session_end)
         state="idle"
         if [ -n "$file" ]; then
-            rm -rf "$subagents_dir" "$shells_dir"
+            rm -rf "$subagents_dir" "$shells_dir" "$awaiting_dir"
         fi
         ;;
-    notification)
-        # Idle/background notifications can be the only event after async work
-        # finishes, so reconcile markers before deciding whether this
-        # notification changes the visible base state.
+    notification_awaiting|notification_idle)
+        # Which kind of notification this is comes from the settings.json
+        # matcher (permission_prompt / agent_needs_input vs idle_prompt /
+        # agent_completed), passed to us as the event arg — the payload has no
+        # notification_type field. Either kind can be the only event after async
+        # work finishes, so reconcile markers first.
         transcript=$(json_string_field "transcript_path")
         prune_completed_markers "$shells_dir" "$transcript" '<task-id>' '</task-id>'
-        prune_completed_markers "$subagents_dir" "$transcript" '<tool-use-id>' '</tool-use-id>'
-        notification_type=$(json_string_field "notification_type")
-        case "$notification_type" in
-            permission_prompt|question_prompt|input_prompt|user_input)
-                state="awaiting"
-                prompt_action="keep"
-                ;;
-            *)
-                exit 0
-                ;;
-        esac
+        prune_completed_markers "$subagents_dir" "$transcript" '<task-id>' '</task-id>'
+        if [ "$event" = "notification_awaiting" ]; then
+            state="awaiting"
+            prompt_action="keep"
+            # Sticky: hold awaiting until the user answers (user_prompt_submit)
+            # or the turn ends, so a background subagent's post_tool_use can't
+            # flip an input-waiting row back to working.
+            set_awaiting "notification"
+        else
+            # idle_prompt / agent_completed: markers reconciled, no state change.
+            exit 0
+        fi
         ;;
     *) exit 0 ;;
 esac

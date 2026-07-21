@@ -6,6 +6,8 @@ dot-config/tmux/plugins/*
 dot-config/developerly/credentials.toml
 dot-local/bin/claude
 dot-local/bin/developerly
+dot-local/bin/gdlint
+dot-local/bin/session-manager-plugin
 dot-config/worktrunk/*.lock
 
 # dot-claude: only track these specific things (everything else is cache/state/history)

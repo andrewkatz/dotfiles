@@ -8,6 +8,10 @@ Never poll a background process via repeated Bash calls. Specifically:
 
 Each Bash poll round-trips its output into context and is discarded on the next poll — that's the single biggest token sink in long sessions.
 
+# Model delegation (Fable)
+
+When running as Fable (claude-fable-5), don't implement directly. Orchestrate: plan, then delegate implementation to Opus subagents via the Agent tool with `model: opus` and review their diffs. Delegate browser QA runs to Opus subagents too (give them the exact flow to exercise; have them return screenshot paths and findings), then judge the evidence yourself. Fable context is for exploration, design decisions, and review — not for writing edits or grinding through browser tool calls.
+
 # Output
 
 - Skip preambles like "Let me…" / "I'll now…" before tool calls. State the goal in one sentence, then call the tool.

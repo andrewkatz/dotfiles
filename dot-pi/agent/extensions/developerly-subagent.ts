@@ -50,6 +50,16 @@ function resolveModel(currentModel: { provider: string; id: string } | undefined
   return currentModel ? `${currentModel.provider}/${currentModel.id}` : DEFAULT_MODEL;
 }
 
+function modelArgs(model: string): string[] {
+  const separator = model.indexOf("/");
+  if (separator <= 0 || separator === model.length - 1) return ["--model", model];
+
+  const provider = model.slice(0, separator);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(provider)) return ["--model", model];
+
+  return ["--provider", provider, "--model", model.slice(separator + 1)];
+}
+
 function baseSystemPrompt(extra?: string): string {
   return [
     "You are a focused Pi subagent spawned by another coding agent.",
@@ -84,7 +94,13 @@ function textFromContent(content: unknown): string {
 function outputFromMessages(messages: Message[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i];
-    if (message.role === "assistant") return textFromContent(message.content);
+    if (message.role !== "assistant") continue;
+
+    const text = textFromContent(message.content).trim();
+    if (text) return text;
+
+    const errorMessage = (message as Message & { errorMessage?: unknown }).errorMessage;
+    if (typeof errorMessage === "string" && errorMessage.trim()) return errorMessage.trim();
   }
   return "";
 }
@@ -146,7 +162,7 @@ async function runSubagent(input: SubagentInput, defaultCwd: string, signal?: Ab
     "--no-prompt-templates",
     "--no-themes",
     "--no-context-files",
-    "--model", model,
+    ...modelArgs(model),
     "--thinking", input.thinking ?? "minimal",
     "--tools", tools,
     "--system-prompt", systemPath,

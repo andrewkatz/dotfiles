@@ -1,16 +1,17 @@
 {
-  "lastChangelogVersion": "0.80.3",
+  "lastChangelogVersion": "0.81.1",
   "packages": [
-    "npm:@benvargas/pi-firecrawl"
+    "npm:@benvargas/pi-firecrawl",
+    "npm:@smoose/pi-image-gen"
   ],
   "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.5",
+  "defaultModel": "gpt-5.6-sol",
   "compaction": {
     "enabled": true,
     "reserveTokens": 16384,
     "keepRecentTokens": 12000
   },
-  "defaultThinkingLevel": "xhigh",
+  "defaultThinkingLevel": "medium",
   "hideThinkingBlock": true,
   "theme": "dark"
 }

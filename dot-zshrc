@@ -69,3 +69,5 @@ chpwd() {
 
 ulimit -n 2560
 export AWS_PAGER=""
+
+[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
