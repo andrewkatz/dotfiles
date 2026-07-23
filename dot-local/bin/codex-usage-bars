@@ -36,7 +36,7 @@ CLAUDE_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials"
 
-CACHE_VERSION = 5
+CACHE_VERSION = 6
 LOCK_MAX_AGE_SECONDS = 120
 TOKEN_REFRESH_SKEW_SECONDS = 60
 LOG_MAX_BYTES = 256 * 1024
@@ -418,7 +418,7 @@ def request_codex_usage(access_token: str, account_id: str | None) -> dict[str, 
     return request_json(codex_usage_url(), headers)
 
 
-def fetch_codex_weekly_percent() -> float:
+def fetch_codex_weekly_usage() -> tuple[float, float | None]:
     auth, tokens = read_codex_auth()
     access_token, account_id = codex_credentials(tokens)
     try:
@@ -444,7 +444,10 @@ def fetch_codex_weekly_percent() -> float:
     used = weekly.get("used_percent")
     if not isinstance(used, (int, float)):
         raise UsageError("Codex weekly window did not include used_percent")
-    return float(used)
+    reset_at = weekly.get("reset_at")
+    if not isinstance(reset_at, (int, float)):
+        reset_at = None
+    return float(used), float(reset_at) if reset_at is not None else None
 
 
 # Claude --------------------------------------------------------------------
@@ -560,7 +563,7 @@ def claude_access_token() -> str:
     return access_token
 
 
-def fetch_claude_weekly_percent() -> float:
+def fetch_claude_weekly_usage() -> tuple[float, float | None]:
     token = claude_access_token()
     payload = request_json(
         claude_usage_url(),
@@ -578,29 +581,49 @@ def fetch_claude_weekly_percent() -> float:
     utilization = weekly.get("utilization")
     if not isinstance(utilization, (int, float)):
         raise UsageError("Claude seven_day did not include utilization")
-    return float(utilization)
+    resets_at = weekly.get("resets_at")
+    reset_timestamp = None
+    if isinstance(resets_at, str):
+        try:
+            reset_timestamp = datetime.fromisoformat(resets_at.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            pass
+    return float(utilization), reset_timestamp
 
 
 # Status/cache ---------------------------------------------------------------
 
 
-def collect_percentages(
+def cached_provider_reset(previous: dict[str, Any] | None, provider: str) -> float | None:
+    if not previous:
+        return None
+    resets_at = previous.get("resets_at")
+    if isinstance(resets_at, dict):
+        value = resets_at.get(provider)
+        if isinstance(value, (int, float)):
+            return float(value)
+    return None
+
+
+def collect_usage(
     previous: dict[str, Any] | None = None,
-) -> tuple[dict[str, float | None], dict[str, dict[str, Any]]]:
+) -> tuple[dict[str, float | None], dict[str, float | None], dict[str, dict[str, Any]]]:
     percentages: dict[str, float | None] = {}
+    resets_at: dict[str, float | None] = {}
     provider_state: dict[str, dict[str, Any]] = {}
     for provider, fetcher in (
-        ("codex", fetch_codex_weekly_percent),
-        ("claude", fetch_claude_weekly_percent),
+        ("codex", fetch_codex_weekly_usage),
+        ("claude", fetch_claude_weekly_usage),
     ):
         now = time.time()
         previous_state = cached_provider_state(previous, provider)
         if should_skip_provider_fetch(provider, previous, now):
             percentages[provider] = cached_provider_percent(previous, provider)
+            resets_at[provider] = cached_provider_reset(previous, provider)
             provider_state[provider] = previous_state
             continue
         try:
-            percentages[provider] = fetcher()
+            percentages[provider], resets_at[provider] = fetcher()
             provider_state[provider] = {
                 "last_attempt_at": now,
                 "last_success_at": now,
@@ -608,20 +631,26 @@ def collect_percentages(
         except (OSError, ValueError, UsageError, urllib.error.URLError, json.JSONDecodeError) as error:
             log_provider_failure(provider, error)
             percentages[provider] = cached_provider_percent(previous, provider)
+            resets_at[provider] = cached_provider_reset(previous, provider)
             provider_state[provider] = {
                 **previous_state,
                 "last_attempt_at": now,
                 "last_error_at": now,
                 "next_attempt_at": now + failure_backoff_seconds(error),
             }
-    return percentages, provider_state
+    return percentages, resets_at, provider_state
 
 
 def collect_output(
     previous: dict[str, Any] | None = None,
-) -> tuple[str, dict[str, float | None], dict[str, dict[str, Any]]]:
-    percentages, provider_state = collect_percentages(previous)
-    return render_chain(percentages["codex"], percentages["claude"]), percentages, provider_state
+) -> tuple[str, dict[str, float | None], dict[str, float | None], dict[str, dict[str, Any]]]:
+    percentages, resets_at, provider_state = collect_usage(previous)
+    return (
+        render_chain(percentages["codex"], percentages["claude"]),
+        percentages,
+        resets_at,
+        provider_state,
+    )
 
 
 def read_cache() -> dict[str, Any] | None:
@@ -638,6 +667,7 @@ def read_cache() -> dict[str, Any] | None:
 def write_cache(
     output: str,
     percentages: dict[str, float | None],
+    resets_at: dict[str, float | None],
     provider_state: dict[str, dict[str, Any]],
 ) -> None:
     path = cache_file()
@@ -648,6 +678,7 @@ def write_cache(
         "fetched_at": time.time(),
         "output": output,
         "percentages": percentages,
+        "resets_at": resets_at,
         "provider_state": provider_state,
     }
     with tmp.open("w", encoding="utf-8") as handle:
@@ -694,8 +725,8 @@ def refresh_cache() -> bool:
         return False
     try:
         previous = read_cache()
-        output, percentages, provider_state = collect_output(previous)
-        write_cache(output, percentages, provider_state)
+        output, percentages, resets_at, provider_state = collect_output(previous)
+        write_cache(output, percentages, resets_at, provider_state)
         return True
     finally:
         release_lock(fd)
