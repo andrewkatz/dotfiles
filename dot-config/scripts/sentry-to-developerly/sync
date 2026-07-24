@@ -12,6 +12,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 import traceback
 import urllib.error
 import urllib.parse
@@ -28,6 +29,8 @@ DEFAULT_SENTRY_ISSUE_LIMIT = 100
 DEFAULT_SENTRY_MAX_PAGES = 5
 DEFAULT_MAX_ISSUES_PER_RUN = 25
 DEFAULT_DESCRIPTION_MAX_CHARS = 30_000
+DEFAULT_EVENT_FETCH_ATTEMPTS = 3
+DEFAULT_EVENT_FETCH_RETRY_SECONDS = 2
 DEFAULT_LOCK_FILE = "/tmp/sentry-to-developerly.lock"
 DEFAULT_STATE_FILE = "~/.cache/sentry-to-developerly/processed.json"
 DEFAULT_DEVELOPERLY_PROJECT = "VIA"
@@ -115,6 +118,12 @@ class Config:
         self.handle_regressions = env_bool(env, "SENTRY_HANDLE_REGRESSIONS", True)
         self.max_regressions_per_run = env_int(env, "SENTRY_MAX_REGRESSIONS_PER_RUN", DEFAULT_MAX_ISSUES_PER_RUN)
         self.description_max_chars = env_int(env, "SENTRY_DESCRIPTION_MAX_CHARS", DEFAULT_DESCRIPTION_MAX_CHARS)
+        self.event_fetch_attempts = max(
+            1, env_int(env, "SENTRY_EVENT_FETCH_ATTEMPTS", DEFAULT_EVENT_FETCH_ATTEMPTS)
+        )
+        self.event_fetch_retry_seconds = max(
+            0, env_int(env, "SENTRY_EVENT_FETCH_RETRY_SECONDS", DEFAULT_EVENT_FETCH_RETRY_SECONDS)
+        )
         self.developerly_cli = env.get("DEVELOPERLY_CLI", default_developerly_cli()).strip()
         self.developerly_project = env.get("DEVELOPERLY_PROJECT", DEFAULT_DEVELOPERLY_PROJECT).strip()
         self.lock_file = env.get("SENTRY_TO_DEVELOPERLY_LOCK_FILE", DEFAULT_LOCK_FILE).strip()
@@ -387,12 +396,25 @@ class SentryToDeveloperly:
         self.save_state()
 
     def latest_event(self, issue: dict[str, Any]) -> dict[str, Any]:
-        try:
-            event, _headers = self.sentry.get(f"/api/0/issues/{issue['id']}/events/latest/")
-            return event or {}
-        except Exception as error:  # noqa: BLE001 - event detail is optional
-            log("WARN", f"Could not fetch latest Sentry event for {issue_label(issue)}: {error}")
-            return {}
+        last_error: Exception | None = None
+        for attempt in range(1, self.config.event_fetch_attempts + 1):
+            try:
+                event, _headers = self.sentry.get(f"/api/0/issues/{issue['id']}/events/latest/")
+                return event or {}
+            except Exception as error:  # noqa: BLE001 - Sentry may still be indexing a new event
+                last_error = error
+                if attempt < self.config.event_fetch_attempts:
+                    log(
+                        "WARN",
+                        f"Could not fetch latest Sentry event for {issue_label(issue)} "
+                        f"(attempt {attempt}/{self.config.event_fetch_attempts}); retrying: {error}",
+                    )
+                    time.sleep(self.config.event_fetch_retry_seconds)
+
+        raise RuntimeError(
+            f"Latest Sentry event for {issue_label(issue)} remained unavailable after "
+            f"{self.config.event_fetch_attempts} attempt(s); task creation deferred"
+        ) from last_error
 
     def create_developerly_task(self, title: str, description: str) -> Any:
         command = [

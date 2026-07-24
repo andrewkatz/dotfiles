@@ -4,6 +4,7 @@ Creates a local Developerly task for each unassigned, unresolved Sentry issue, t
 
 - Polls one or more Sentry projects for `is:unresolved` issues that have no assignee.
 - For each new issue, creates a Developerly task (via the `developerly` CLI) with a rich Markdown body: exception, stack trace, request, user, tags, context, and recent breadcrumbs (sensitive keys redacted).
+- Retries briefly when Sentry has not indexed the latest event yet. If it remains unavailable, task creation is deferred until the next sync so environment tags and event details are not lost.
 - Titles are prefixed `[Sentry]`, or `[Sentry] [BETA]` when the issue's environment is `beta`.
 - Only after the task is created is the Sentry issue assigned (`SENTRY_ASSIGNEE`, default `me`), which marks it processed on the Sentry side. A local state file (`~/.cache/sentry-to-developerly/processed.json`) also dedupes across runs.
 - A lock file prevents overlapping runs.
