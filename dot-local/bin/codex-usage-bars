@@ -36,7 +36,7 @@ CLAUDE_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials"
 
-CACHE_VERSION = 6
+CACHE_VERSION = 7
 LOCK_MAX_AGE_SECONDS = 120
 TOKEN_REFRESH_SKEW_SECONDS = 60
 LOG_MAX_BYTES = 256 * 1024
@@ -563,7 +563,7 @@ def claude_access_token() -> str:
     return access_token
 
 
-def fetch_claude_weekly_usage() -> tuple[float, float | None]:
+def fetch_claude_weekly_usage() -> tuple[float, float | None, float | None, float | None]:
     token = claude_access_token()
     payload = request_json(
         claude_usage_url(),
@@ -582,13 +582,36 @@ def fetch_claude_weekly_usage() -> tuple[float, float | None]:
     if not isinstance(utilization, (int, float)):
         raise UsageError("Claude seven_day did not include utilization")
     resets_at = weekly.get("resets_at")
-    reset_timestamp = None
-    if isinstance(resets_at, str):
-        try:
-            reset_timestamp = datetime.fromisoformat(resets_at.replace("Z", "+00:00")).timestamp()
-        except ValueError:
-            pass
-    return float(utilization), reset_timestamp
+    reset_timestamp = parse_reset_timestamp(resets_at)
+
+    fable_utilization = None
+    fable_reset_timestamp = None
+    limits = payload.get("limits")
+    if isinstance(limits, list):
+        for limit in limits:
+            if not isinstance(limit, dict):
+                continue
+            scope = limit.get("scope")
+            model = scope.get("model") if isinstance(scope, dict) else None
+            display_name = model.get("display_name") if isinstance(model, dict) else None
+            if not isinstance(display_name, str) or display_name.casefold() != "fable":
+                continue
+            percent = limit.get("percent")
+            if isinstance(percent, (int, float)):
+                fable_utilization = float(percent)
+            fable_reset_timestamp = parse_reset_timestamp(limit.get("resets_at"))
+            break
+
+    return float(utilization), reset_timestamp, fable_utilization, fable_reset_timestamp
+
+
+def parse_reset_timestamp(value: Any) -> float | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
 
 
 # Status/cache ---------------------------------------------------------------
@@ -608,8 +631,12 @@ def cached_provider_reset(previous: dict[str, Any] | None, provider: str) -> flo
 def collect_usage(
     previous: dict[str, Any] | None = None,
 ) -> tuple[dict[str, float | None], dict[str, float | None], dict[str, dict[str, Any]]]:
-    percentages: dict[str, float | None] = {}
-    resets_at: dict[str, float | None] = {}
+    percentages: dict[str, float | None] = {
+        "fable": cached_provider_percent(previous, "fable"),
+    }
+    resets_at: dict[str, float | None] = {
+        "fable": cached_provider_reset(previous, "fable"),
+    }
     provider_state: dict[str, dict[str, Any]] = {}
     for provider, fetcher in (
         ("codex", fetch_codex_weekly_usage),
@@ -623,7 +650,10 @@ def collect_usage(
             provider_state[provider] = previous_state
             continue
         try:
-            percentages[provider], resets_at[provider] = fetcher()
+            usage = fetcher()
+            percentages[provider], resets_at[provider] = usage[:2]
+            if provider == "claude":
+                percentages["fable"], resets_at["fable"] = usage[2:]
             provider_state[provider] = {
                 "last_attempt_at": now,
                 "last_success_at": now,
