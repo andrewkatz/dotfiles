@@ -18,6 +18,7 @@ Drive the current feature in a real browser in the local dev environment and con
 1. **Derive this worktree's dev URL and port** using the **`dev-qa`** skill — it covers port derivation, host/protocol, login, and driving the app with the `agent-browser` skill. Follow the skill, **except its "ask the user to start the server / only start it yourself if the user explicitly asks" step, which does NOT apply here.** This command is the explicit, standing authorization to start the server yourself.
 
    - **Use a worktree-unique `agent-browser` session** (per the skill): pass `--session "qa-$PORT"` on every browser command. Other worktrees and agents QA in parallel, and the default shared session would collide on cookies, tabs, and login state. If another agent is on this same worktree/port, add a suffix you reuse for the whole run (e.g. `qa-$PORT-b`).
+   - **Keep the browser session headless by default.** Only use a headed browser when it is absolutely necessary to complete or debug the QA flow; switch back to headless when it is no longer needed.
 
 2. **Make sure the server is up — and start it yourself if it isn't.**
    - Check whether anything is listening: `lsof -iTCP:"$PORT" -sTCP:LISTEN -P` (or `curl -s -o /dev/null -w "%{http_code}" -m 5 "$URL"` — `000` means nothing is listening).
