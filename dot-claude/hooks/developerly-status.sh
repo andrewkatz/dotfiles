@@ -248,8 +248,16 @@ case "$event" in
             fi
         fi
         # A tool completing (or failing) resolves any awaiting prompt it raised.
+        # Claude emits the generic needs-input notification alongside the
+        # tool-specific prompt, but does not emit user_prompt_submit when an
+        # AskUserQuestion answer is selected. Clear both markers together once
+        # that same tool resumes; leave them sticky for unrelated parallel tools.
         if [ "$event" = "post_tool_use" ] || [ "$event" = "post_tool_failure" ]; then
-            clear_awaiting "$tool_name"
+            awaiting_tool_key=$(awaiting_key "$tool_name")
+            if [ -n "$awaiting_dir" ] && [ -n "$awaiting_tool_key" ] && [ -f "$awaiting_dir/$awaiting_tool_key" ]; then
+                clear_awaiting "$tool_name"
+                clear_awaiting "notification"
+            fi
         fi
         ;;
     permission_request)
