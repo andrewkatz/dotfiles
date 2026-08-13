@@ -56,7 +56,9 @@ common:
   # Work SSH helper aliases in dot-zsh/aliases.zsh
   WORK_SSH_KEY: "$HOME/.ssh/work/id_ed25519"
   WORK_SSH_CORE_TARGET: "user@host.example.com"
+  WORK_SSH_CORE_PROXY_COMMAND: "aws ssm start-session --target i-example --document-name AWS-StartSSHSession --parameters portNumber=%p --region us-west-2 --profile work"
   WORK_SSH_LG_API_TARGET: "user@host.example.com"
+  WORK_SSH_LG_API_PROXY_COMMAND: "aws ssm start-session --target i-example --document-name AWS-StartSSHSession --parameters portNumber=%p --region us-west-2 --profile work"
   WORK_SSH_WHITELABEL_TARGET: "user@host.example.com"
   WORK_SSH_DATA_TUNNEL_TARGET: "user@host.example.com"
   WORK_SSH_SFTP_TARGET: "user@host.example.com"

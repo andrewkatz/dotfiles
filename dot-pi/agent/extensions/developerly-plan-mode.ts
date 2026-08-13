@@ -2,6 +2,26 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+
+const PLAN_CONFIG_VERSION = 1;
+const MCP_TOOL_NAME = "mcp";
+const MCP_ALLOW_ONCE = "Allow once";
+const MCP_ALLOW_SESSION = "Allow for this plan session";
+const MCP_ALLOW_ALWAYS = "Always allow in plan";
+const MCP_BLOCK = "Block";
+
+type McpToolApproval = {
+  server: string;
+  tool: string;
+};
+
+type PlanModeConfig = {
+  version: typeof PLAN_CONFIG_VERSION;
+  allowedMcpTools: McpToolApproval[];
+};
 
 const STATE_ENTRY = "developerly-plan-mode";
 const CONTEXT_ENTRY = "developerly-plan-mode-context";
@@ -192,10 +212,90 @@ function isReadOnlySubagent(input: unknown): boolean {
   return params.tools.split(",").map((tool) => tool.trim()).filter(Boolean).every((tool) => readOnly.has(tool));
 }
 
+function planModeConfigPath(): string {
+  const configHome = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+  return join(configHome, "developerly", "pi-plan-mode.json");
+}
+
+function approvalKey(approval: McpToolApproval): string {
+  return JSON.stringify([approval.server, approval.tool]);
+}
+
+function parsePlanModeConfig(value: unknown): PlanModeConfig {
+  if (!value || typeof value !== "object") throw new Error("config must be an object");
+  const config = value as { version?: unknown; allowedMcpTools?: unknown };
+  if (config.version !== PLAN_CONFIG_VERSION) throw new Error(`unsupported config version: ${String(config.version)}`);
+  if (!Array.isArray(config.allowedMcpTools)) throw new Error("allowedMcpTools must be an array");
+
+  const allowedMcpTools = config.allowedMcpTools.map((entry, index) => {
+    if (!entry || typeof entry !== "object") throw new Error(`allowedMcpTools[${index}] must be an object`);
+    const approval = entry as { server?: unknown; tool?: unknown };
+    if (typeof approval.server !== "string" || approval.server.trim() === "") {
+      throw new Error(`allowedMcpTools[${index}].server must be a non-empty string`);
+    }
+    if (typeof approval.tool !== "string" || approval.tool.trim() === "") {
+      throw new Error(`allowedMcpTools[${index}].tool must be a non-empty string`);
+    }
+    return { server: approval.server, tool: approval.tool };
+  });
+
+  return { version: PLAN_CONFIG_VERSION, allowedMcpTools };
+}
+
+function readPlanModeConfig(): PlanModeConfig {
+  const path = planModeConfigPath();
+  if (!existsSync(path)) return { version: PLAN_CONFIG_VERSION, allowedMcpTools: [] };
+  try {
+    return parsePlanModeConfig(JSON.parse(readFileSync(path, "utf8")));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Could not read ${path}: ${message}`);
+  }
+}
+
+function persistMcpApproval(approval: McpToolApproval): void {
+  const path = planModeConfigPath();
+  const config = readPlanModeConfig();
+  const approvals = new Map(config.allowedMcpTools.map((entry) => [approvalKey(entry), entry]));
+  approvals.set(approvalKey(approval), approval);
+  const allowedMcpTools = [...approvals.values()].sort((left, right) =>
+    left.server.localeCompare(right.server) || left.tool.localeCompare(right.tool));
+  const next: PlanModeConfig = { version: PLAN_CONFIG_VERSION, allowedMcpTools };
+  const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  try {
+    writeFileSync(tempPath, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    renameSync(tempPath, path);
+  } finally {
+    rmSync(tempPath, { force: true });
+  }
+}
+
+function isMcpInspection(input: Record<string, unknown>): boolean {
+  const hasUnsafeSelector = input.action !== undefined || input.tool !== undefined || input.connect !== undefined;
+  return !hasUnsafeSelector && (typeof input.search === "string" || typeof input.describe === "string");
+}
+
+function mcpToolApproval(input: Record<string, unknown>): McpToolApproval | undefined {
+  const server = typeof input.server === "string" ? input.server.trim() : "";
+  const tool = typeof input.tool === "string" ? input.tool.trim() : "";
+  if (!server || !tool) return undefined;
+  return { server, tool };
+}
+
+function displayedMcpArgs(input: Record<string, unknown>): string {
+  const args = typeof input.args === "string" ? input.args : "{}";
+  const maxLength = 2_000;
+  return args.length <= maxLength ? args : `${args.slice(0, maxLength)}…`;
+}
+
 export default function developerlyPlanMode(pi: ExtensionAPI): void {
   let planModeEnabled = false;
   let previousActiveTools: string[] | undefined;
   let approvedPlanExit = false;
+  let mcpApprovalQueue: Promise<void> = Promise.resolve();
+  const sessionMcpApprovals = new Set<string>();
 
   function readOnlyTools(): string[] {
     const available = new Set(pi.getAllTools().map((tool) => tool.name));
@@ -205,8 +305,82 @@ export default function developerlyPlanMode(pi: ExtensionAPI): void {
     for (const tool of READ_ONLY_TOOLS) {
       if (available.has(tool) && !selected.includes(tool)) selected.push(tool);
     }
+    if (available.has(MCP_TOOL_NAME) && !selected.includes(MCP_TOOL_NAME)) selected.push(MCP_TOOL_NAME);
 
     return selected;
+  }
+
+  function queuedMcpApproval<T>(callback: () => Promise<T>): Promise<T> {
+    const result = mcpApprovalQueue.then(callback, callback);
+    mcpApprovalQueue = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  function isAlwaysAllowed(approval: McpToolApproval): boolean {
+    return readPlanModeConfig().allowedMcpTools.some((entry) => approvalKey(entry) === approvalKey(approval));
+  }
+
+  async function approveMcpToolCall(input: Record<string, unknown>, ctx: ExtensionContext): Promise<string | undefined> {
+    const approval = mcpToolApproval(input);
+    if (approval) {
+      const key = approvalKey(approval);
+      try {
+        if (isAlwaysAllowed(approval)) return;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (ctx.hasUI) ctx.ui.notify(message, "error");
+        return `Developerly plan mode blocked the MCP call because its approval config is invalid. ${message}`;
+      }
+      if (sessionMcpApprovals.has(key)) return;
+    }
+
+    if (!ctx.hasUI) {
+      return "Developerly plan mode blocks unapproved MCP tool calls without an interactive Pi TUI.";
+    }
+
+    return queuedMcpApproval(async () => {
+      if (approval) {
+        const key = approvalKey(approval);
+        try {
+          if (isAlwaysAllowed(approval)) return;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          ctx.ui.notify(message, "error");
+          return `Developerly plan mode blocked the MCP call because its approval config is invalid. ${message}`;
+        }
+        if (sessionMcpApprovals.has(key)) return;
+      }
+
+      const server = approval?.server ?? "(server not provided)";
+      const tool = typeof input.tool === "string" && input.tool.trim() ? input.tool.trim() : "(tool not provided)";
+      const choices = [MCP_ALLOW_ONCE, MCP_ALLOW_SESSION];
+      if (approval) choices.push(MCP_ALLOW_ALWAYS);
+      choices.push(MCP_BLOCK);
+      const choice = await ctx.ui.select(
+        `Allow MCP call in plan mode?\nServer: ${server}\nTool: ${tool}\nArguments: ${displayedMcpArgs(input)}\nPermanent approval allows every argument for this tool.`,
+        choices,
+      );
+
+      if (choice === MCP_ALLOW_ONCE) return;
+      if (choice === MCP_ALLOW_SESSION) {
+        if (!approval) return "Retry the MCP call with an explicit server to approve it for this plan session.";
+        sessionMcpApprovals.add(approvalKey(approval));
+        return;
+      }
+      if (choice === MCP_ALLOW_ALWAYS) {
+        if (!approval) return "Retry the MCP call with an explicit server to approve it permanently.";
+        try {
+          persistMcpApproval(approval);
+          return;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          ctx.ui.notify(`Could not save MCP plan approval: ${message}`, "error");
+          return `Developerly plan mode blocked the MCP call because its permanent approval could not be saved. ${message}`;
+        }
+      }
+
+      return `Developerly plan mode blocked MCP tool ${tool}.`;
+    });
   }
 
   function updateStatus(ctx: ExtensionContext): void {
@@ -231,6 +405,7 @@ export default function developerlyPlanMode(pi: ExtensionAPI): void {
   function enterPlanMode(ctx: ExtensionContext, notify = true): void {
     if (!planModeEnabled) previousActiveTools = activeToolsWithoutPlanExit();
     approvedPlanExit = false;
+    sessionMcpApprovals.clear();
     planModeEnabled = true;
     pi.setActiveTools(readOnlyTools());
     updateStatus(ctx);
@@ -241,6 +416,7 @@ export default function developerlyPlanMode(pi: ExtensionAPI): void {
   function exitPlanMode(ctx: ExtensionContext, notify = true): void {
     approvedPlanExit = false;
     planModeEnabled = false;
+    sessionMcpApprovals.clear();
     const restore = previousActiveTools && previousActiveTools.length > 0
       ? previousActiveTools
       : pi.getAllTools().map((tool) => tool.name).filter((tool) => tool !== "exit_plan_mode");
@@ -364,10 +540,28 @@ Planning workflow:
     await pi.sendUserMessage("The plan has been approved. You are now in build mode with full tool access. Execute the approved plan.", { deliverAs: "followUp" });
   });
 
-  pi.on("tool_call", async (event) => {
+  pi.on("tool_call", async (event, ctx) => {
     if (!planModeEnabled) return;
 
     if (event.toolName === "exit_plan_mode") return;
+    if (event.toolName === MCP_TOOL_NAME) {
+      if (isMcpInspection(event.input)) return;
+      if (event.input.action !== undefined || event.input.connect !== undefined) {
+        return {
+          block: true,
+          reason: "Developerly plan mode blocks MCP connect and action operations.",
+        };
+      }
+      if (typeof event.input.tool !== "string" || event.input.tool.trim() === "") {
+        return {
+          block: true,
+          reason: "Developerly plan mode allows MCP search and describe operations, but blocks connect, authentication, status, listing, and other gateway actions.",
+        };
+      }
+      const reason = await approveMcpToolCall(event.input, ctx);
+      if (!reason) return;
+      return { block: true, reason };
+    }
     if (event.toolName === "run_subagent" && !isReadOnlySubagent(event.input)) {
       return {
         block: true,

@@ -10,7 +10,13 @@ Each Bash poll round-trips its output into context and is discarded on the next 
 
 # Model delegation (Fable)
 
-When running as Fable (claude-fable-5), don't implement directly. Orchestrate: plan, then delegate implementation to Opus subagents via the Agent tool with `model: opus` and review their diffs. Delegate browser QA runs to Opus subagents too (give them the exact flow to exercise; have them return screenshot paths and findings), then judge the evidence yourself. Fable context is for exploration, design decisions, and review — not for writing edits or grinding through browser tool calls.
+When running as Fable (claude-fable-5), don't implement directly. Orchestrate: plan, then delegate implementation to subagents via the Agent tool and review their diffs. Fable context is for exploration, design decisions, and review — not for writing edits or grinding through browser tool calls.
+
+Pick the subagent model by task difficulty:
+- `model: sonnet` — well-specified, scoped implementation: spec'd single-purpose edits, test writing, mechanical refactors, and browser QA runs (give them the exact flow to exercise; have them return screenshot paths and findings, then judge the evidence yourself).
+- `model: opus` — multi-file features, larger refactors, debugging with unknown cause, and any brief that says "figure out" rather than "implement."
+- Write precise briefs either way — outcome quality tracks spec quality more than sub-model choice.
+- If a Sonnet subagent's diff comes back wrong, rerun the task on Opus instead of iterating with Sonnet — a redo cycle erases the savings.
 
 # Output
 

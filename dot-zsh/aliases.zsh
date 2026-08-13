@@ -135,21 +135,31 @@ function tm() {
 }
 
 # ssh shortcuts (work)
-# Targets and key paths live in ~/.zsh_secrets, generated from the private sops repo.
-# Expected vars: WORK_SSH_KEY plus WORK_SSH_*_TARGET values like user@host.
+# Targets, key paths, and optional proxy commands live in ~/.zsh_secrets,
+# generated from the private sops repo. Expected vars: WORK_SSH_KEY plus
+# WORK_SSH_*_TARGET values like user@host.
 _work_ssh() {
   local target_var="$1"
   local key_var="$2"
-  shift 2
+  local proxy_var="$3"
+  shift 3
 
   local target="${(P)target_var}"
   local key=""
+  local proxy_command=""
   if [[ -n "$key_var" ]]; then
     key="${(P)key_var}"
+  fi
+  if [[ -n "$proxy_var" ]]; then
+    proxy_command="${(P)proxy_var}"
   fi
 
   if [[ -z "$target" ]]; then
     echo "Set $target_var in ~/.zsh_secrets (run bin/ss after updating sops secrets)." >&2
+    return 1
+  fi
+  if [[ -n "$proxy_var" && -z "$proxy_command" ]]; then
+    echo "Set $proxy_var in ~/.zsh_secrets (run bin/ss after updating sops secrets)." >&2
     return 1
   fi
 
@@ -157,15 +167,18 @@ _work_ssh() {
   if [[ -n "$key" ]]; then
     ssh_args+=(-i "$key")
   fi
+  if [[ -n "$proxy_command" ]]; then
+    ssh_args+=(-o "ProxyCommand=$proxy_command")
+  fi
 
   ssh "${ssh_args[@]}" "$target" "$@"
 }
 
-ssh_core() { _work_ssh WORK_SSH_CORE_TARGET WORK_SSH_KEY "$@"; }
-ssh_lg_api() { _work_ssh WORK_SSH_LG_API_TARGET WORK_SSH_KEY "$@"; }
-ssh_whitelabel() { _work_ssh WORK_SSH_WHITELABEL_TARGET WORK_SSH_KEY "$@"; }
-ssh_data_tunnel() { _work_ssh WORK_SSH_DATA_TUNNEL_TARGET "" "$@"; }
-ssh_sftp() { _work_ssh WORK_SSH_SFTP_TARGET WORK_SSH_KEY "$@"; }
+ssh_core() { _work_ssh WORK_SSH_CORE_TARGET WORK_SSH_KEY WORK_SSH_CORE_PROXY_COMMAND "$@"; }
+ssh_lg_api() { _work_ssh WORK_SSH_LG_API_TARGET WORK_SSH_KEY WORK_SSH_LG_API_PROXY_COMMAND "$@"; }
+ssh_whitelabel() { _work_ssh WORK_SSH_WHITELABEL_TARGET WORK_SSH_KEY "" "$@"; }
+ssh_data_tunnel() { _work_ssh WORK_SSH_DATA_TUNNEL_TARGET "" "" "$@"; }
+ssh_sftp() { _work_ssh WORK_SSH_SFTP_TARGET WORK_SSH_KEY "" "$@"; }
 
 # VPN switching
 es() {
@@ -194,7 +207,7 @@ ed() {
 
 # AI
 alias crush='crush --yolo'
-alias c="claude --model 'opus' --dangerously-skip-permissions"
+alias c="claude --model 'fable' --dangerously-skip-permissions"
 alias cx="claude --allow-dangerously-skip-permissions --permission-mode plan --model 'opus'"
 alias g='goose'
 alias gr='goose session -r'

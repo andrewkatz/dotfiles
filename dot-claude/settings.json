@@ -7,7 +7,7 @@
       "~/.cache"
     ]
   },
-  "model": "opus",
+  "model": "claude-fable-5[1m]",
   "hooks": {
     "Elicitation": [
       {
@@ -285,7 +285,7 @@
     "command": "~/.config/scripts/claude-statusline"
   },
   "enabledPlugins": {
-    "frontend-design@claude-plugins-official": true,
+    "frontend-design@claude-plugins-official": false,
     "ruby-lsp@claude-plugins-official": true,
     "swift-lsp@claude-plugins-official": true
   },
@@ -298,6 +298,7 @@
     }
   },
   "effortLevel": "xhigh",
+  "showThinkingSummaries": true,
   "skipDangerousModePermissionPrompt": true,
   "inputNeededNotifEnabled": true,
   "agentPushNotifEnabled": true,
