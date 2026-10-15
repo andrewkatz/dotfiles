@@ -74,7 +74,7 @@ Spawn a background subagent (`model: sonnet`) with the project's live checks fro
 
 ## done
 
-Worktree clean, branch merged, live evidence recorded → add any follow-ups for Andrew (`policy.md` "Follow-ups for Andrew") → `developerly work-items complete <id> --confirm=<id>` (work item id or `wi:N` for linked tasks, `local:N` for local-only ones), then verify the task is gone from `conductor-sync`. Ledger entry moves to `ledger.done` with the evidence summary.
+Worktree clean, branch merged, live evidence recorded → add any follow-ups for Andrew (`policy.md` "Follow-ups for Andrew") → `developerly work-items complete <id> --confirm=<id>` (work item id or `wi:N` for linked tasks, `local:N` for local-only ones), then verify the task is gone from `conductor-sync` and run `~/.claude/skills/conductor/bin/conductor-docker-gc` (stops its Docker stack; `complete` removes the worktree but leaves the containers running). Ledger entry moves to `ledger.done` with the evidence summary.
 
 ## Launching
 
@@ -87,7 +87,7 @@ cd <project repo path> && developerly work-items launch local:<local_id> --agent
 
 **React, don't wait for the next tick.** When a worker pushes a PR, return a `monitor:` line for its CI run (`conductor-watch-run <owner/repo> <run-id> ci-<task>`, with the run id from `gh run list --branch <branch> --limit 1 --json databaseId`), just like deploys, so a green CI triggers the merge decision within minutes. A worker's `implemented`/`fixed` report triggers its gate job right away. A PR with green CI should never sit unmerged for longer than one gate job takes.
 
-Before each launch, run `docker network prune -f` (it removes only networks no container uses). Every worktree leaves a compose network behind, and Docker runs out of addresses at about 30, which kills the next launch at pre-start (2197 sat dead for 2h on 2026-10-15). Record `launched_at` in the ledger.
+Before each launch, run `~/.claude/skills/conductor/bin/conductor-docker-gc`: it stops the Docker stacks of finished tasks and prunes their networks. Every worktree starts a compose stack with its own network, and Docker (OrbStack) runs out of addresses at about 30, which kills the next launch at pre-start (2197 sat dead for 2h on 2026-10-15; 2234, 2235 and 2133 later the same day). If it reports 28 or more networks, don't launch: report it with `push:` instead. Record `launched_at` in the ledger.
 
 The session appears in `conductor-sync` once Claude starts; record its name in the ledger on the next tick.
 

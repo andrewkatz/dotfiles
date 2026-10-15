@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Stop the Docker compose stacks of finished tasks. Every developerly worktree starts its own stack (and network),
+# and nothing stops it when the task completes; OrbStack runs out of network address pools at ~30.
+# A stack is finished when its worktree is gone, or it's a developerly worktree (<repo>.andrewkatz-*) that's no
+# longer in progress and untouched for 6h. Uses `compose down` without -v, so volumes are kept. Leaves everything else alone.
+#   conductor-docker-gc            stop finished stacks, print what it did and the network count
+#   conductor-docker-gc --dry-run  only list them
+set -uo pipefail
+HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+live=$("$HERE/conductor-sync" --json | python3 -c 'import json,sys; print("\n".join(s["worktree"] for s in json.load(sys.stdin) if s.get("worktree")))') || {
+  echo "conductor-sync failed; not touching anything" >&2; exit 1; }
+n=0
+while IFS='|' read -r project dir; do
+  [[ -n $project && -n $dir ]] || continue
+  if [[ -d $dir ]]; then
+    [[ $(basename "$dir") == *.andrewkatz-* ]] || continue        # not a developerly worktree: leave it
+    grep -qxF "$dir" <<<"$live" && continue                       # task still in progress
+    [[ -n $(find "$dir" -maxdepth 3 -mmin -360 -not -path "*/tmp/*" -not -path "*/log/*" -print -quit 2>/dev/null) ]] && continue  # touched in 6h: someone may be using it
+  fi
+  if [[ ${1:-} == --dry-run ]]; then echo "would stop $project ($dir)"; else
+    docker compose -p "$project" down --remove-orphans >/dev/null 2>&1 && echo "stopped $project" || echo "failed $project"
+  fi
+  n=$((n + 1))
+done < <(docker ps --format '{{.Label "com.docker.compose.project"}}|{{.Label "com.docker.compose.project.working_dir"}}' | sort -u)
+[[ ${1:-} == --dry-run ]] || docker network prune -f >/dev/null 2>&1
+echo "$n finished stack(s); $(docker network ls -q | wc -l | tr -d ' ') networks (limit ~30)"
