@@ -56,7 +56,7 @@ Spawn a background subagent (`model: opus`) in the worktree: run the `code-revie
 ## shipping
 
 0. VIA only: `conductor-base-check <worktree> HEAD --target <base>` must exit 0 before you tell the worker to ship. Exit 2 means the ledger base is wrong: set it to `beta` and continue. Other projects: the base is the profile's single base branch.
-1. Tell the worker: "Read ~/.claude/commands/ship.md and follow it with base `<base>`, but STOP after checks pass - do not merge. Report the PR URL and check status."
+1. Tell the worker: "Read ~/.claude/commands/ship.md and follow it with base `<base>`, but STOP after checks pass - do not merge (you're a conductor worker; ship.md's 'Stop here if you were told not to merge' applies). Report the PR URL and check status."
 2. Verify: (VIA) `conductor-base-check <repo> --pr <n>` exits 0 (run it again **immediately before merging**, every time - bases get retargeted and branches get rebased); PR base matches the ledger base, PR head is the branch QA'd and reviewed (no new commits since review except fixes you saw), checks green (`gh pr checks`; repos with no CI: the worker's local test output from the `testing` gate stands in, and is re-run on the final head).
 3. Check the project's row in `projects.md` → "Merge and deploy authority" and its "Never automate" list: a PR they reserve for Andrew → queue a blocking merge question and stop. Then apply "Safe to merge" (`policy.md`). Safe → merge yourself: the merge command from the project's profile (from outside the worktree so `--delete-branch` is fine). Not safe → queue a blocking question with the PR link and the specific reason.
 

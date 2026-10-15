@@ -43,6 +43,7 @@ Ship the current branch through to merge. Raw arguments: `$ARGUMENTS`. The optio
 ## 5. Handle results
 
 **If all checks pass:**
+- **Stop here if you were told not to merge.** When the instructions that sent you to this file say "stop after checks pass", "do not merge", or come from the conductor (any session coordinated by `conductor`), report the PR URL and check status and stop. That instruction overrides every "keep going" and "pre-authorized" line in this file. The conductor merges after its own gate.
 - Merge. Pick the style matching the repo's recent merged PRs (`gh pr list --state merged --limit 5 --json title,mergeCommit`). Default to `gh pr merge --admin --squash --delete-branch`. The `--admin` flag bypasses branch-protection review requirements so the merge goes through without an approving review — the user has pre-authorized this. Add `--auto` only if required checks aren't all green yet (they should be, since we just waited); do not combine `--auto` with `--admin`.
 - **Worktree caveat:** if the current checkout is a non-primary worktree (check with `git rev-parse --git-common-dir` ≠ `.git`, or `git worktree list` shows the current path is not the main one), `--delete-branch` will fail with `'main' is already used by worktree at ...` because gh tries to switch the local checkout to the default branch. Run the merge without `--delete-branch` instead, then delete the remote branch explicitly: `gh pr merge --admin --merge` (or `--squash`/`--rebase`) followed by `git push origin --delete <branch>` (or rely on GitHub's "automatically delete head branches" repo setting). Verify the merge with `gh pr view <num> --json state,mergeCommit` afterward. Do **not** try to switch this worktree off its branch — leave local cleanup to the user, who can run `git worktree remove <path>` from the primary checkout when convenient.
 
@@ -54,7 +55,7 @@ Ship the current branch through to merge. Raw arguments: `$ARGUMENTS`. The optio
 
 ## Continuation rule
 
-- Creating a branch, making a commit, pushing, opening/finding a PR, or seeing checks pending is not a stopping point. Keep going through the next numbered step until the PR is merged or a guardrail requires asking the user.
+- Creating a branch, making a commit, pushing, opening/finding a PR, or seeing checks pending is not a stopping point. Keep going through the next numbered step until the PR is merged (or, if you were told not to merge, until checks pass) or a guardrail requires asking the user.
 - If a command returns a transient/non-final state (for example, `gh pr checks` initially says no checks are reported, or checks are queued/pending), inspect the PR/check rollup and keep waiting rather than stopping.
 
 ## Guardrails (repeat — do not break these)

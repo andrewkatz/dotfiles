@@ -10,7 +10,7 @@ This task is coordinated by a session named `conductor`. Use SendMessage to reac
 - Fix findings you're sent, rerun tests, and reply `task <id> fixed: <what changed>`.
 - Do not merge, and do not open a PR until the conductor tells you to ship. When it does:
   1. Run `~/.claude/skills/conductor/bin/conductor-base-check . HEAD --target <base>` with exactly the base it gave you. If it refuses (exit 2), stop and tell the conductor. Never retarget, rebase onto main, or open the PR against main yourself.
-  2. Read `~/.claude/commands/ship.md` and follow it with that base, stopping after checks pass, then report the PR URL.
+  2. Read `~/.claude/commands/ship.md` and follow it with that base, but **never merge**: stop as soon as checks pass and report the PR URL. The conductor merges after its own gate. ship.md's "continue through merge" doesn't apply to you.
 - If the task needs a database migration, put it on its own branch/PR (migration only), separate from code that depends on it. It must be additive and work with the code currently on `main` (beta and production share the database). Renames/drops/type changes: do only the additive step now and tell the conductor what the later cleanup step is.
 - If you're blocked on a product decision or missing access, message `conductor` with one specific question instead of guessing.
 - Never run `developerly work-items complete`. The conductor does that after the change is verified live.
