@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+"""Conductor dashboard: http://localhost:8710 - what's waiting on Andrew + what's in flight.
+
+Runs under launchd (com.katz.conductor-web). Localhost only.
+  GET  /                 the page (web/index.html)
+  GET  /api/state        conductor-status --json + recent decisions + answers sent from the page
+  POST /api/followup/done {"id": "F3"}       clears it now (conductor-followup done)
+  POST /api/say           {"text": "Q12: merge it"}   -> ledger.web_queue; the dispatcher's conductor-web-wait monitor wakes it within seconds
+"""
+import datetime, json, os, subprocess
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+PAGE = os.path.join(HERE, "..", "web", "index.html")
+STATE = os.path.expanduser("~/.local/share/conductor")
+PORT = int(os.environ.get("CONDUCTOR_WEB_PORT", "8710"))
+from importlib.machinery import SourceFileLoader
+FU = SourceFileLoader("cfu", os.path.join(HERE, "conductor-followup")).load_module()
+HOSTS = {f"localhost:{PORT}", f"127.0.0.1:{PORT}"}
+
+
+def run(*cmd):
+    r = subprocess.run([os.path.join(HERE, cmd[0]), *cmd[1:]], capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        raise RuntimeError((r.stderr or r.stdout).strip()[:300])
+    return r.stdout
+
+
+def state():
+    data = json.loads(run("conductor-status", "--json"))
+    try:
+        led = json.load(open(os.path.join(STATE, "ledger.json")))
+    except (OSError, json.JSONDecodeError):
+        led = {}
+    data["decisions"] = list(reversed(led.get("decisions", [])[-15:]))
+    open_q = {q["id"] for q in data["questions"]}
+    sent = led.get("web_sent") or {}
+    data["sent"] = [s for s in sent.values() if s.get("ref") in open_q or s.get("ref") is None
+                    and s["ts"] > (datetime.datetime.now() - datetime.timedelta(hours=1)).isoformat()]
+    data["inbox_pending"] = len(led.get("web_queue") or [])
+    titles = {str(t.get("task")): None for t in data["followups"] + data["questions"] + data["decisions"] if t.get("task")}
+    data["titles"] = {k: FU.task_title(k) for k in titles}
+    data["now"] = datetime.datetime.now().isoformat(timespec="seconds")
+    return data
+
+
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def send(self, code, body, ctype="application/json"):
+        b = body if isinstance(body, bytes) else json.dumps(body, default=str).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(b)))
+        self.end_headers()
+        self.wfile.write(b)
+
+    def guard(self):
+        # DNS-rebinding / cross-site guard: only our own host, and POSTs need a custom header (forces CORS preflight)
+        if self.headers.get("Host") not in HOSTS:
+            self.send(403, {"error": "bad host"})
+            return False
+        if self.command == "POST" and self.headers.get("X-Conductor") != "1":
+            self.send(403, {"error": "missing header"})
+            return False
+        return True
+
+    def do_GET(self):
+        if not self.guard():
+            return
+        try:
+            if self.path == "/":
+                self.send(200, open(PAGE, "rb").read(), "text/html; charset=utf-8")
+            elif self.path == "/api/state":
+                self.send(200, state())
+            elif self.path == "/api/shadow":
+                r = subprocess.run([os.path.expanduser("~/.claude/skills/comms/bin/comms-shadow"), "report", "--json"],
+                                   capture_output=True, text=True, timeout=30)
+                self.send(200, json.loads(r.stdout or "{}"))
+            else:
+                self.send(404, {"error": "not found"})
+        except Exception as e:
+            self.send(500, {"error": str(e)})
+
+    def do_POST(self):
+        if not self.guard():
+            return
+        try:
+            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+            if self.path == "/api/followup/done":
+                fid = str(body["id"]).upper()
+                self.send(200, {"ok": True, "out": run("conductor-followup", "done", fid).strip()})
+            elif self.path == "/api/say":
+                text = str(body["text"]).strip()
+                if not text:
+                    return self.send(400, {"error": "empty"})
+                ts = datetime.datetime.now().isoformat(timespec="seconds")
+                ref = body.get("ref")
+                run("conductor-ledger", "append", "web_queue", json.dumps({"text": text, "ts": ts}))
+                key = (ref or "msg") + "-" + ts.replace(":", "")
+                run("conductor-ledger", "set", f"web_sent.{key}", json.dumps({"ref": ref, "text": text, "ts": ts}))
+                self.send(200, {"ok": True})
+            else:
+                self.send(404, {"error": "not found"})
+        except Exception as e:
+            self.send(500, {"error": str(e)})
+
+
+if __name__ == "__main__":
+    ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()

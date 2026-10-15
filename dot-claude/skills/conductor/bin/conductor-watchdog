@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Restart the conductor when its context gets large. Run by launchd every 10 minutes.
+# Only restarts when the session is idle (not busy, not waiting on Andrew) and no jobs are running.
+set -uo pipefail
+LIMIT=${CONDUCTOR_CONTEXT_LIMIT:-150000}
+info=$(claude agents --json 2>/dev/null | python3 -c 'import json,sys; s=next((s for s in json.load(sys.stdin) if s.get("name")=="conductor"), None); print(f"{s[\"sessionId\"]} {s.get(\"status\")}" if s else "")')
+[[ -n $info ]] || exit 0
+read -r sid status <<<"$info"
+[[ $status == idle ]] || exit 0
+transcript=$(ls ~/.claude/projects/*/"$sid".jsonl 2>/dev/null | head -1)
+[[ -n $transcript ]] || exit 0
+ctx=$(tail -n 400 "$transcript" | python3 -c '
+import json, sys
+last = 0
+for line in sys.stdin:
+    try: d = json.loads(line)
+    except ValueError: continue
+    u = (d.get("message") or {}).get("usage")
+    if d.get("type") == "assistant" and u:
+        last = u.get("input_tokens", 0) + u.get("cache_read_input_tokens", 0) + u.get("cache_creation_input_tokens", 0)
+print(last)')
+[[ ${ctx:-0} -gt $LIMIT ]] || exit 0
+jobs=$(~/.claude/skills/conductor/bin/conductor-ledger get jobs 2>/dev/null | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null || echo 0)
+[[ $jobs == 0 ]] || exit 0
+echo "$(date '+%F %T') context $ctx > $LIMIT, idle, no jobs - restarting" >> ~/.local/share/conductor/watchdog.log
+~/.claude/skills/conductor/bin/conductor-restart

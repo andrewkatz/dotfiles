@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Stop the conductor session (if any), compact the ledger layout, and start a fresh dispatcher.
+#   conductor-restart [--no-start]
+# Safe at any time state-wise (everything is on disk), but anything running in the old session -
+# jobs, monitors - dies with it; the new session's first tick re-dispatches from the ledger.
+set -euo pipefail
+id=$(claude agents --json | python3 -c 'import json,sys; print(next((s.get("id") or s["sessionId"][:8] for s in json.load(sys.stdin) if s.get("name")=="conductor"), ""))')
+if [[ -n $id ]]; then
+  claude stop "$id" >/dev/null 2>&1 || true
+  claude rm "$id" >/dev/null 2>&1 || true
+fi
+python3 - <<'PY'
+import json, os
+d = os.path.expanduser("~/.local/share/conductor")
+p = os.path.join(d, "ledger.json")
+led = json.load(open(p))
+def merge_into(name, key, value):
+    f = os.path.join(d, name)
+    cur = json.load(open(f)) if os.path.exists(f) else {}
+    if isinstance(value, dict):
+        cur.update(value) if key is None else cur.setdefault(key, {}).update(value)
+    else:
+        cur.setdefault(key, []).extend(value)
+    json.dump(cur, open(f + ".tmp", "w"), indent=1); os.replace(f + ".tmp", f)
+for key, name in (("hermes", "hermes.json"), ("done", "done.json")):
+    if key in led:
+        value = led.pop(key)
+        if not os.path.exists(os.path.join(d, name)):
+            merge_into(name, None, value)
+qs = led.get("questions", [])
+old_q = [q for q in qs if q.get("status") != "open"]
+if old_q:
+    merge_into("archive.json", "questions", old_q)
+    led["questions"] = [q for q in qs if q.get("status") == "open"]
+ds = led.get("decisions", [])
+if len(ds) > 20:
+    merge_into("archive.json", "decisions", ds[:-20])
+    led["decisions"] = ds[-20:]
+ids = led.setdefault("next_ids", {})
+for old, prefix in (("next_q", "Q"), ("next_d", "D")):
+    if old in led:
+        ids[prefix] = max(ids.get(prefix, 1), int(led.pop(old)))
+led["jobs"] = {}
+for t in led.get("tasks", {}).values():
+    t.pop("job", None)
+led.pop("inbox", None)
+json.dump(led, open(p + ".tmp", "w"), indent=1); os.replace(p + ".tmp", p)
+print("ledger.json", os.path.getsize(p), "bytes")
+PY
+echo "$(date '+%F %T') restarted (old ${id:-none})" >> ~/.local/share/conductor/watchdog.log
+[[ ${1:-} == --no-start ]] && exit 0
+cd "$HOME/Work"
+claude --bg --name conductor --model sonnet --effort low --permission-mode bypassPermissions "/loop /conductor"

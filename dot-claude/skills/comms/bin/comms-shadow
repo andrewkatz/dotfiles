@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+"""Shadow-mode comms worker: drafts a reply to every message that needs Andrew, sends NOTHING, and later
+grades each draft against what he actually sent. The scoreboard says which kinds of messages could be handed off.
+
+  comms-shadow run [--hours 48]     pull new messages, draft them, grade drafts that now have a real reply
+  comms-shadow report [--json]      scoreboard by category and audience, plus recent grades
+  comms-shadow show ID              one item in full
+
+Runs every 30 min under launchd (com.katz.comms-shadow). State: ~/.local/share/comms/shadow.json.
+Reads Hermes datasets on katz-mini read-only (bin/comms-remote.py over ssh). Drafts with `claude -p`
+(no tools, no settings); nothing here can send a message.
+"""
+import base64, collections, concurrent.futures as cf, datetime, fcntl, json, os, re, subprocess, sys, time
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+ROOT = os.path.dirname(HERE)
+STATE_DIR = os.path.expanduser("~/.local/share/comms")
+STATE = os.path.join(STATE_DIR, "shadow.json")
+DRAFT_MODEL = os.environ.get("COMMS_DRAFT_MODEL", "opus")
+JUDGE_MODEL = os.environ.get("COMMS_JUDGE_MODEL", "sonnet")
+NO_REPLY_AFTER = 72 * 3600
+MAX_DRAFTS = 30
+
+
+def log(msg):
+    print(f"{datetime.datetime.now():%H:%M:%S} {msg}", flush=True)
+
+
+def load():
+    try:
+        return json.load(open(STATE))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"cursor": None, "items": {}}
+
+
+def save(st):
+    tmp = STATE + ".tmp"
+    json.dump(st, open(tmp, "w"), indent=1)
+    os.replace(tmp, STATE)
+
+
+def remote(*args):
+    script = open(os.path.join(HERE, "comms-remote.py")).read()
+    r = subprocess.run(["ssh", "-o", "ConnectTimeout=15", "katz-mini", "python3", "-", *args],
+                       input=script, capture_output=True, text=True, timeout=600)
+    if r.returncode != 0:
+        raise RuntimeError("remote failed: " + r.stderr.strip()[-400:])
+    return json.loads(r.stdout)
+
+
+def claude(model, system_file, payload):
+    r = subprocess.run(
+        ["claude", "-p", "--model", model, "--tools", "", "--setting-sources", "", "--no-session-persistence",
+         "--output-format", "json", "--system-prompt", open(os.path.join(ROOT, "prompts", system_file)).read()],
+        input=json.dumps(payload, ensure_ascii=False), capture_output=True, text=True, timeout=300, cwd=STATE_DIR)
+    try:
+        out = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        raise RuntimeError((r.stderr or r.stdout).strip()[-300:])
+    if out.get("is_error"):
+        raise RuntimeError(str(out.get("result"))[:300])
+    text = out.get("result") or ""
+    m = re.search(r"\{.*\}", text, re.S)
+    if not m:
+        raise RuntimeError("no JSON in reply: " + text[:200])
+    return json.loads(m.group(0))
+
+
+def pipeline_context():
+    try:
+        d = json.loads(subprocess.run([os.path.expanduser("~/.claude/skills/conductor/bin/conductor-status"), "--json", "--all"],
+                                      capture_output=True, text=True, timeout=60).stdout)
+    except Exception:  # noqa: BLE001
+        return []
+    tasks = [f"{t['title']} ({t['id']}): {t['stage']}" for t in d.get("tasks", [])]
+    return tasks + [f"{t['title']} ({t['id']}): done today" for t in d.get("done_today", [])]
+
+
+def lessons_for(st, item):
+    out = []
+    for it in sorted(st["items"].values(), key=lambda x: x.get("ts_epoch", 0), reverse=True):
+        lesson = (it.get("grade") or {}).get("lesson")
+        if it.get("ts_epoch", 0) >= item.get("ts_epoch", 0):
+            continue  # only lessons that existed when this message arrived
+        if lesson and (it.get("channel") == item.get("channel") and it.get("channel") or it.get("sender") == item.get("sender")):
+            out.append(lesson)
+        if len(out) >= 8:
+            break
+    return out
+
+
+def draft_one(st, item, ctx):
+    payload = {k: item.get(k) for k in ("source", "account", "time_pst", "sender", "context", "is_dm", "flags",
+                                        "new_contact", "text", "thread", "examples")}
+    payload["lessons"] = lessons_for(st, item)
+    # the task list is "now"; for older messages it would leak the future, so only fresh ones get it
+    payload["pipeline_tasks"] = ctx if time.time() - item["ts_epoch"] < 3600 else []
+    # draft as if replying a few minutes after it arrived, which is how the real worker will run
+    payload["now_pst"] = datetime.datetime.fromtimestamp(item["ts_epoch"] + 300).strftime("%Y-%m-%d %H:%M")
+    return claude(DRAFT_MODEL, "draft.md", payload)
+
+
+def run(hours):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    lock = open(os.path.join(STATE_DIR, ".lock"), "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        log("another run is in progress")
+        return
+    st = load()
+    since = st["cursor"] or time.time() - hours * 3600
+    cands = remote("candidates", str(since - 300))  # small overlap; ids dedupe
+    new = [c for c in cands if c["id"] not in st["items"]]
+    log(f"{len(cands)} candidates, {len(new)} new")
+    ctx = pipeline_context()
+    for c in new:
+        c["status"] = "pending"
+        c["tries"] = 0
+        st["items"][c["id"]] = c
+    todo = [it for it in st["items"].values() if it["status"] == "pending" and it["tries"] < 3][:MAX_DRAFTS]
+
+    def work(it):
+        try:
+            return it["id"], draft_one(st, it, ctx), None
+        except Exception as e:  # noqa: BLE001
+            return it["id"], None, str(e)
+    with cf.ThreadPoolExecutor(4) as ex:
+        for iid, d, err in ex.map(work, todo):
+            it = st["items"][iid]
+            it["tries"] += 1
+            if d:
+                it.update(draft=d, status="drafted", drafted_at=time.time())
+                log(f"drafted {it['source']} {it['sender'][:30]}: {d.get('category')} needs_reply={d.get('needs_reply')}")
+            else:
+                it["error"] = err
+                log(f"draft failed {iid}: {err}")
+    if cands:
+        st["cursor"] = max(st["cursor"] or 0, max(c["ts_epoch"] for c in cands))
+    save(st)
+
+    # grade drafts that now have Andrew's real reply
+    waiting = [it for it in st["items"].values() if it["status"] == "drafted"]
+    if waiting:
+        q = [{k: it[k] for k in ("id", "source", "key", "channel", "is_dm", "ts_epoch")} for it in waiting]
+        found = remote("replies", base64.b64encode(json.dumps(q).encode()).decode())
+        for it in waiting:
+            actual = found.get(it["id"])
+            if actual:
+                it["actual"] = actual
+                if not it["draft"].get("needs_reply"):
+                    it.update(status="graded", grade={"verdict": "missed", "diff": "drafter said no reply needed, but Andrew replied", "lesson": ""})
+                    continue
+                try:
+                    g = claude(JUDGE_MODEL, "judge.md", {"incoming": {k: it.get(k) for k in ("source", "sender", "context", "text")},
+                                                         "draft": it["draft"], "actual_reply": actual["text"]})
+                    it.update(status="graded", grade=g, graded_at=time.time())
+                    log(f"graded {it['sender'][:30]}: {g.get('verdict')}")
+                except Exception as e:  # noqa: BLE001
+                    log(f"grade failed {it['id']}: {e}")
+            elif time.time() - it["ts_epoch"] > NO_REPLY_AFTER:
+                ok = not it["draft"].get("needs_reply")
+                it.update(status="graded", grade={"verdict": "skip-correct" if ok else "no-reply",
+                                                  "diff": "" if ok else "Andrew never replied (in this channel)", "lesson": ""})
+        save(st)
+
+
+GOOD = ("same", "minor")
+
+
+def report(as_json):
+    st = load()
+    items = list(st["items"].values())
+    graded = [i for i in items if i.get("status") == "graded"]
+    rows = collections.defaultdict(collections.Counter)
+    for i in graded:
+        d = i.get("draft") or {}
+        k = (d.get("category", "?"), d.get("audience", "?"))
+        rows[k][i["grade"]["verdict"]] += 1
+    table = []
+    for (cat, aud), c in sorted(rows.items(), key=lambda kv: -sum(kv[1].values())):
+        judged = sum(c[v] for v in ("same", "minor", "different", "wrong"))
+        ok = c["same"] + c["minor"]
+        table.append({"category": cat, "audience": aud, "n": sum(c.values()), "judged": judged, "same": c["same"],
+                      "minor": c["minor"], "different": c["different"], "wrong": c["wrong"], "missed": c["missed"],
+                      "no_reply": c["no-reply"], "skip_correct": c["skip-correct"],
+                      "sendable_pct": round(100 * ok / judged) if judged else None,
+                      "candidate": judged >= 10 and ok / judged >= 0.8 and c["wrong"] == 0})
+    recent = sorted(graded, key=lambda i: i.get("graded_at") or i["ts_epoch"], reverse=True)[:25]
+    out = {"counts": collections.Counter(i.get("status") for i in items), "table": table,
+           "recent": [{"id": i["id"], "time_pst": i["time_pst"], "source": i["source"], "sender": i["sender"],
+                       "context": i["context"], "link": i.get("link"), "text": i["text"][:600],
+                       "draft": (i.get("draft") or {}).get("draft"), "category": (i.get("draft") or {}).get("category"),
+                       "audience": (i.get("draft") or {}).get("audience"), "actual": (i.get("actual") or {}).get("text"),
+                       "verdict": i["grade"]["verdict"], "diff": i["grade"].get("diff")} for i in recent]}
+    if as_json:
+        print(json.dumps(out, default=str))
+        return
+    c = out["counts"]
+    print(f"Shadow drafts: {c.get('drafted', 0)} waiting for your reply, {c.get('graded', 0)} graded, {c.get('pending', 0)} to draft")
+    if table:
+        print(f"\n{'category':<14}{'audience':<10}{'n':>4}{'sendable':>10}  same/minor/diff/wrong  missed noreply")
+        for r in table:
+            pct = f"{r['sendable_pct']}%" if r["sendable_pct"] is not None else "-"
+            print(f"{r['category']:<14}{r['audience']:<10}{r['n']:>4}{pct:>10}  {r['same']}/{r['minor']}/{r['different']}/{r['wrong']:<14}"
+                  f"{r['missed']:>6}{r['no_reply']:>8}{'  <- candidate' if r['candidate'] else ''}")
+
+
+def show(iid):
+    st = load()
+    it = st["items"].get(iid) or next((v for k, v in st["items"].items() if iid in k), None)
+    print(json.dumps(it, indent=1, default=str) if it else "not found")
+
+
+if __name__ == "__main__":
+    a = sys.argv[1:]
+    if not a:
+        sys.exit(__doc__)
+    if a[0] == "run":
+        run(float(a[a.index("--hours") + 1]) if "--hours" in a else 48)
+    elif a[0] == "report":
+        report("--json" in a)
+    elif a[0] == "show":
+        show(a[1])
+    else:
+        sys.exit(__doc__)

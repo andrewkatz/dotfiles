@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Wait for a GitHub Actions run and print exactly ONE line, then exit. For the dispatcher's Monitor tool:
+# every stdout line wakes the dispatcher, so this must never print progress.
+#   conductor-watch-run <owner/repo> <run-id> <label> [max-seconds=1500]
+# Output: "<label> run <id> success|failure|cancelled|..." on completion, or
+#         "<label> run <id> still <status> after <n>s" if max-seconds passes (re-arm to keep waiting).
+repo=$1 id=$2 label=$3 max=${4:-1500}
+start=$(date +%s)
+while :; do
+  read -r status conclusion < <(gh run view "$id" -R "$repo" --json status,conclusion -q '"\(.status) \(.conclusion)"' 2>/dev/null || echo "unknown none")
+  if [[ $status == completed ]]; then
+    echo "$label run $id ${conclusion:-unknown}"
+    exit 0
+  fi
+  elapsed=$(( $(date +%s) - start ))
+  if (( elapsed >= max )); then
+    echo "$label run $id still $status after ${elapsed}s"
+    exit 0
+  fi
+  sleep 30
+done

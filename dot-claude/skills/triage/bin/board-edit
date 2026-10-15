@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Apply deterministic board edits on katz-mini (~/katz-board/board_edit.py). Reads a JSON list of ops on stdin.
+#   board-edit [--apply] < ops.json      (dry run without --apply)
+# Ops: done {headline, note} | remove {headline, reason} | move {headline, section, note} |
+#      detail {headline, text} | retitle {headline, new}. Prints per-op results as JSON.
+exec ssh -o ConnectTimeout=10 katz-mini "python3 ~/katz-board/board_edit.py $*"

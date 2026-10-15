@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Detect whether a branch is based on beta or main, and refuse beta commits going to main.
+#
+#   conductor-base-check <repo-or-worktree> <ref>  [--target main|beta]
+#   conductor-base-check <repo-or-worktree> --pr <number>
+#
+# "beta-based" = the ref contains commits that are on origin/beta but not on origin/main.
+# Exit 0: ok. Exit 2: ref is beta-based and the target is main (would ship unreleased beta to production).
+# Exit 1: usage/git error.
+set -euo pipefail
+
+repo=${1:?repo path}; shift
+ref="" target="" pr=""
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --pr) pr=$2; shift 2
+          target=$(cd "$repo" && gh pr view "$pr" --json baseRefName -q .baseRefName)
+          ref="refs/conductor/pr-$pr" ;;
+    --target) target=$2; shift 2 ;;
+    *) ref=$1; shift ;;
+  esac
+done
+[[ -n $ref ]] || { echo "usage: conductor-base-check <repo> <ref> [--target main|beta] | --pr <n>" >&2; exit 1; }
+
+cd "$repo"
+git fetch -q origin main beta
+[[ -n ${pr:-} ]] && git fetch -q origin "+pull/$pr/head:$ref"
+git rev-parse --verify -q "$ref" >/dev/null || { echo "unknown ref: $ref" >&2; exit 1; }
+
+leaked=$(comm -12 <(git rev-list "$ref" ^origin/main | sort) <(git rev-list origin/beta ^origin/main | sort))
+count=$(grep -c . <<<"$leaked" || true)
+own=$(git rev-list --count "$ref" ^origin/main ^origin/beta)
+
+if [[ $count -gt 0 ]]; then based=beta; else based=main; fi
+echo "based_on=$based beta_only_commits=$count branch_commits=$own target=${target:-unset}"
+
+if [[ $based == beta && $target == main ]]; then
+  echo "REFUSE: $ref contains $count commit(s) that are only on beta; targeting main would ship unreleased beta changes to production." >&2
+  echo "Fix: target beta. If this change must reach main, cherry-pick only the branch's own commits onto a new branch from origin/main." >&2
+  git log --oneline --no-walk=sorted $leaked | head -5 >&2
+  exit 2
+fi

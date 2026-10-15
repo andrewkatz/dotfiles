@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""Snapshot every in-flight developerly task joined with its Claude session, PR and ledger stage.
+
+Read-only against developerly (SQLite opened with mode=ro). Writes nothing except
+when --init-ledger is passed, which adds missing tasks to the ledger as stage "untriaged".
+
+Usage:
+  conductor-sync            # compact table, in developerly sort order
+  conductor-sync --json     # full JSON for the conductor to reason over
+  conductor-sync --todo     # also include the todo queue (for slot filling / order review)
+  conductor-sync --init-ledger
+"""
+import json, os, sqlite3, subprocess, sys, datetime
+
+DB = os.path.expanduser("~/.local/share/developerly/developerly.db")
+LEDGER = os.path.expanduser("~/.local/share/conductor/ledger.json")
+PROJECTS_TOML = os.path.expanduser("~/.config/developerly/projects.toml")
+ME = "andrewkatz"
+
+
+def projects():
+    out, cur = {}, None
+    for line in open(PROJECTS_TOML):
+        line = line.strip()
+        if line == "[[projects]]":
+            cur = {}
+        elif "=" in line and cur is not None:
+            k, v = [s.strip() for s in line.split("=", 1)]
+            cur[k] = v.strip('"')
+            if k == "repo" and "name" in cur:
+                out[cur["name"]] = cur
+    return out
+
+
+def tasks(include_todo):
+    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    statuses = ("in_progress", "todo") if include_todo else ("in_progress",)
+    cols = {r[1] for r in con.execute("pragma table_info(tasks)")}
+    base_col = "base_branch" if "base_branch" in cols else "null as base_branch"
+    q = f"""select id, {base_col}, project_name, title, status, branch, tmux_session, sort_order,
+                   developerly_work_item_id, kind, github_pr_url, github_pr_number, github_pr_state,
+                   assigned_to_me, assignee_login, started_at, updated_at
+            from tasks where status in ({",".join("?" * len(statuses))})
+            and (assigned_to_me = 1 or assignee_login is null or assignee_login = ?)
+            order by status, sort_order desc, id desc"""
+    return [dict(r) for r in con.execute(q, (*statuses, ME))]
+
+
+def sessions():
+    try:
+        raw = subprocess.run(["claude", "agents", "--json"], capture_output=True, text=True, timeout=30).stdout
+        return {s["cwd"]: s for s in json.loads(raw)}
+    except Exception:
+        return {}
+
+
+def worktree(task, projs):
+    repo = projs.get(task["project_name"], {}).get("repo")
+    if task.get("tmux_session"):
+        r = subprocess.run(["tmux", "display", "-p", "-t", task["tmux_session"], "#{pane_current_path}"],
+                           capture_output=True, text=True)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    if repo and task.get("branch"):
+        guess = f"{repo}.{task['branch'].replace('/', '-')}"
+        if os.path.isdir(guess):
+            return guess
+    return None
+
+
+def load_ledger():
+    try:
+        return json.load(open(LEDGER))
+    except FileNotFoundError:
+        return {"tasks": {}, "log": []}
+
+
+def main():
+    args = set(sys.argv[1:])
+    projs, sess, ledger = projects(), sessions(), load_ledger()
+    rows = []
+    for t in tasks("--todo" in args):
+        wt = worktree(t, projs) if t["status"] == "in_progress" else None
+        s = sess.get(wt) if wt else None
+        led = ledger["tasks"].get(str(t["id"]), {})
+        rows.append({
+            "local_id": t["id"], "work_item_id": t["developerly_work_item_id"], "project": t["project_name"],
+            "title": t["title"], "status": t["status"], "sort_order": t["sort_order"], "kind": t["kind"],
+            "base_branch": t["base_branch"], "branch": t["branch"], "tmux": t["tmux_session"], "worktree": wt,
+            "session": s["name"] if s else None, "session_status": s["status"] if s else None,
+            "pr": t["github_pr_url"], "pr_number": t["github_pr_number"], "pr_state": t["github_pr_state"],
+            "stage": led.get("stage", "untriaged" if t["status"] == "in_progress" else "queued"),
+            "escalation": led.get("escalation"), "updated_at": t["updated_at"],
+        })
+
+    if "--init-ledger" in args:
+        now = datetime.datetime.now().isoformat(timespec="seconds")
+        for r in rows:
+            if r["status"] == "in_progress":
+                ledger["tasks"].setdefault(str(r["local_id"]), {
+                    "stage": "untriaged", "project": r["project"], "title": r["title"],
+                    "base": None, "session": r["session"], "evidence": {}, "notes": [], "since": now})
+        os.makedirs(os.path.dirname(LEDGER), exist_ok=True)
+        json.dump(ledger, open(LEDGER, "w"), indent=2)
+        print(f"ledger: {len(ledger['tasks'])} tasks")
+        return
+
+    if "--json" in args:
+        print(json.dumps(rows, indent=1))
+        return
+    for r in rows:
+        pr = f"#{r['pr_number']}({r['pr_state']})" if r["pr_number"] else "-"
+        print(f"{r['local_id']:>5} {r['project'][:14]:<14} {r['status'][:4]:<4} {r['stage'][:12]:<12} "
+              f"{(r['session'] or '-')[:34]:<34} {(r['session_status'] or '-'):<7} {pr:<14} {r['title'][:50]}")
+
+
+if __name__ == "__main__":
+    main()

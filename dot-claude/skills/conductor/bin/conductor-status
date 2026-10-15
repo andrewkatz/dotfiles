@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+"""What the conductor is working on right now, grouped by what each task is waiting for.
+
+  conductor-status            working + deploying/live + waiting on Andrew, open questions, running jobs
+  conductor-status --all      also parked tasks and everything completed today
+  conductor-status --json     the same data as JSON
+
+Read-only: ledger files, the developerly DB (via conductor-sync), `claude agents`, ledger.log.
+In Claude Code: `! conductor-status`.
+"""
+import datetime, json, os, shutil, subprocess, sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+STATE = os.path.expanduser("~/.local/share/conductor")
+WORKING = ["spec", "implementing", "testing", "qa", "review", "shipping"]
+FLIGHT = ["deploying", "live"]
+LIMIT = "6 total, 4/project"
+TTY = sys.stdout.isatty()
+
+
+def load(name, default):
+    try:
+        return json.load(open(os.path.join(STATE, name)))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return default
+
+
+def sh(*cmd):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=60).stdout
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return ""
+
+
+def ago(ts):
+    if not ts:
+        return ""
+    try:
+        t = datetime.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    now = datetime.datetime.now(t.tzinfo) if t.tzinfo else datetime.datetime.now()
+    s = (now - t).total_seconds()
+    if s < -60 and not t.tzinfo:  # naive UTC timestamp written by a job
+        s = (datetime.datetime.utcnow() - t).total_seconds()
+    return f"{int(s // 60)}m" if s < 3600 else f"{s / 3600:.1f}h" if s < 86400 else f"{int(s // 86400)}d"
+
+
+def pst(ts):
+    t = datetime.datetime.fromisoformat(str(ts))
+    return t.strftime("%-I:%M%p").lower()[:-1]
+
+
+def bold(s):
+    return f"\033[1m{s}\033[0m" if TTY else s
+
+
+def dim(s):
+    return f"\033[2m{s}\033[0m" if TTY else s
+
+
+def db_title(tid):
+    try:
+        import sqlite3
+        con = sqlite3.connect(f"file:{os.path.expanduser('~/.local/share/developerly/developerly.db')}?mode=ro", uri=True)
+        row = con.execute("select title from tasks where id = ?", (int(tid),)).fetchone()
+        return row[0] if row else ""
+    except Exception:
+        return ""
+
+
+def last_events():
+    out = {}
+    try:
+        for line in open(os.path.join(STATE, "ledger.log")):
+            try:
+                e = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            out[str(e.get("task"))] = e
+    except FileNotFoundError:
+        pass
+    return out
+
+
+def main():
+    show_all, as_json = "--all" in sys.argv, "--json" in sys.argv
+    ledger = load("ledger.json", {})
+    tasks = ledger.get("tasks", {})
+    jobs = {k: v for k, v in (ledger.get("jobs") or {}).items() if v}
+    questions = [q for q in ledger.get("questions", []) if q.get("status") == "open"]
+    fu = ledger.get("andrew_followups") or {}
+    followups = [f for f in (fu.values() if isinstance(fu, dict) else fu) if f.get("status") == "open"]
+    sync = {}
+    try:
+        sync = {str(r["local_id"]): r for r in json.loads(sh(os.path.join(HERE, "conductor-sync"), "--json") or "[]")}
+    except json.JSONDecodeError:
+        pass
+    events = last_events()
+    agents = {}
+    try:
+        for a in json.loads(sh("claude", "agents", "--json") or "[]"):
+            agents[a.get("name")] = a
+    except json.JSONDecodeError:
+        pass
+
+    rows = []
+    for tid, t in tasks.items():
+        if not isinstance(t, dict) or t.get("stage") in ("done", "todo"):  # todo = queued in developerly, not in flight
+            continue
+        s = sync.get(tid, {})
+        stage = t.get("stage", "?")
+        group = "working" if stage in WORKING else "flight" if stage in FLIGHT else "waiting"
+        if stage == "parked" and not show_all:
+            continue
+        ev = events.get(tid, {})
+        job = next((k for k, v in jobs.items() if str(v.get("task")) == tid), "")
+        qs = [q["id"] + ("!" if q.get("blocking") else "") for q in questions if str(q.get("task")) == tid]
+        if qs and group == "working" and any(q.endswith("!") for q in qs):
+            group = "waiting"
+        pr = f"#{s['pr_number']}" + (f" {s['pr_state'].lower()}" if s.get("pr_state") else "") if s.get("pr_number") else ""
+        rows.append({
+            "id": tid, "project": t.get("project") or s.get("project", ""), "stage": stage, "group": group,
+            "worker": s.get("session_status") or ("-" if not t.get("session") else "gone"),
+            "pr": pr, "job": job, "questions": qs, "rounds": t.get("review_rounds"),
+            "since": ago(t.get("since") or ev.get("ts")), "base": t.get("base") or "",
+            "last": f"{pst(ev['ts'])} {ev.get('action', '')} {ev.get('detail', '')}".strip() if ev.get("ts") else "",
+            "resume_when": t.get("resume_when", ""), "rush": bool(t.get("expedite")), "type": t.get("type", ""),
+            "title": t.get("title") or s.get("title") or db_title(tid),
+        })
+    order = {s: i for i, s in enumerate(WORKING + FLIGHT)}
+    rows.sort(key=lambda r: (not r["rush"], order.get(r["stage"], 99), r["project"], r["id"]))
+    done_today = []
+    today = datetime.date.today().isoformat()
+    for tid, d in (load("done.json", {}).get("done") or load("done.json", {})).items():
+        if isinstance(d, dict) and str(d.get("completed") or d.get("since") or d.get("ts") or "").startswith(today):
+            done_today.append({"id": tid, "title": d.get("title", "")})
+
+    conductor = agents.get("conductor", {})
+    working = [r for r in rows if r["group"] == "working" and not r["rush"]]
+    rush = [r for r in rows if r["rush"]]
+    data = {"conductor": conductor.get("status") or ("running" if conductor else "not running"),
+            "working": len(working), "rush": len(rush), "limit": LIMIT, "jobs": jobs, "tasks": rows,
+            "questions": questions, "followups": followups, "done_today": done_today}
+    if as_json:
+        print(json.dumps(data, indent=1, default=str))
+        return
+
+    width = max(100, min(shutil.get_terminal_size((160, 40)).columns, 200))
+    now = datetime.datetime.now().strftime("%-I:%M%p").lower()
+    print(bold(f"Conductor {data['conductor']} · {now} PST · working {len(working)} ({LIMIT})"
+               + (f" + {len(rush)} rush" if rush else "") + f" · jobs {len(jobs)} · open questions {len(questions)}"))
+    if followups:
+        red = (lambda x: f"\033[1;31m{x}\033[0m") if TTY else (lambda x: x)
+        print()
+        print(red(f"For you to do ({len(followups)}) - say \"F<n> done\" in the conductor"))
+        for f in followups:
+            print(f"  {f['id']:<4} {str(f.get('task') or ''):>5}  {f['who'] + ': ' if f.get('who') else ''}{f['what']}"[:width])
+            if f.get("draft"):
+                print(dim("        draft: " + f["draft"].replace("\n", " ")[:width - 16]))
+
+    def table(title, group, extra):
+        rs = [r for r in rows if r["group"] == group]
+        if not rs:
+            return
+        print()
+        print(bold(f"{title} ({len(rs)})"))
+        for r in rs:
+            flags = " ".join(x for x in [r["pr"], f"job:{r['job'].split('-')[0]}" if r["job"] else "",
+                                         f"r{r['rounds']}" if r["rounds"] else "", " ".join(r["questions"])] if x)
+            head = f"{'!' if r['rush'] else ' '} {r['id']:>5} {r['project'][:12]:<12} {r['stage'][:12]:<12} {r['worker'][:7]:<7} {r['since']:>5}  "
+            line = head + f"{r['title']}"
+            print(line[:width])
+            sub = extra(r)
+            info = "  ".join(x for x in [flags, sub] if x)
+            if info:
+                print(dim(("        " + info)[:width]))
+
+    table("Working", "working", lambda r: r["last"])
+    table("Deploying / live checks", "flight", lambda r: r["last"])
+    table("Waiting", "waiting", lambda r: (f"resumes when: {r['resume_when']}" if r["resume_when"] else r["last"]))
+    if questions:
+        print()
+        print(bold(f"Questions for Andrew ({len(questions)})"))
+        for q in questions:
+            b = "blocking " if q.get("blocking") else ""
+            print(f"  {q['id']:<4} {str(q.get('task') or ''):>5}  {b}{q['question']}"[:width])
+    if jobs:
+        print()
+        print(bold("Running jobs"))
+        print("  " + "  ".join(f"{k} ({ago(v.get('started'))})" if len(str(v.get("started", ""))) > 10 else k
+                               for k, v in jobs.items())[:width - 2])
+    if show_all and done_today:
+        print()
+        print(bold(f"Completed today ({len(done_today)})"))
+        for d in done_today:
+            print(f"  {d['id']:>5} {d['title']}"[:width])
+    print(dim("\ncolumns: id project stage worker age title (age = since stage change, else last event) · leading ! = rush (outside the limit) · Q! = blocking question · --all adds parked + done today"))
+
+
+if __name__ == "__main__":
+    main()

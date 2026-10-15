@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""Read Andrew's Hermes priority board (katz-mini) and print the open engineering candidates.
+
+Read-only: GET /api/board on the katz-board server over the tailnet. Never writes TODO.md.
+
+  conductor-board                 # compact table: FOCUS/NOW/SOON, Giant Partners lane, Andrew's
+  conductor-board --json          # same items as JSON for reasoning
+  conductor-board --mtime         # just the board's last-modified time (cheap change check)
+  conductor-board --lane Comfortly
+  conductor-board --uncached      # JSON of only the headlines not yet in the verdict cache (use this on ticks)
+
+Items are keyed by headline (board ids like now-0 are positional and shift; headlines are
+byte-stable by the board's own rules). focus_rank is 1-3 when the board ties the item to a FOCUS
+project, else null. FOCUS items themselves are project-level and carry focus_rank too.
+"""
+import json, os, re, sys, urllib.request
+
+URL = "https://katz-mini.tail3d1b31.ts.net:8444/api/board"
+SECTIONS = {"FOCUS": "focus", "NOW": "now", "SOON": "soon"}
+
+
+def fetch():
+    with urllib.request.urlopen(URL, timeout=20) as r:
+        return json.load(r)
+
+
+def main():
+    args = sys.argv[1:]
+    lane = "Giant Partners"
+    if "--lane" in args:
+        lane = args[args.index("--lane") + 1]
+    board = fetch()
+    if "--mtime" in args:
+        print(board["mtimeISO"])
+        return
+
+    rank_by_id = {}
+    for f in board.get("focus", []):
+        rank_by_id[f["id"]] = f["n"]
+        for ids in f.get("matched", {}).values():
+            for item_id in ids:
+                rank_by_id.setdefault(item_id, f["n"])
+
+    out = []
+    for section in board["sections"]:
+        key = SECTIONS.get(section["title"])
+        if not key:
+            continue
+        for item in section["items"]:
+            if item.get("done") or item.get("personal"):
+                continue
+            if item.get("owner") not in (None, "Andrew"):
+                continue
+            if not item.get("context", "").startswith(lane):
+                continue
+            urls = [s["url"] for s in item.get("src", []) if s.get("url")]
+            prs = sorted({int(n) for u in urls for n in re.findall(r"github\.com/[^/]+/[^/]+/pull/(\d+)", u)})
+            out.append({
+                "section": key,
+                "focus_rank": rank_by_id.get(item["id"]),
+                "headline": item["headline"],
+                "context": item["context"],
+                "detail": item.get("detail", [])[-4:],
+                "src": urls,
+                "prs": prs,
+            })
+
+    order = {"focus": 0, "now": 1, "soon": 2}
+    out.sort(key=lambda i: (order[i["section"]], i["focus_rank"] or 9))
+    if "--uncached" in args:
+        cache_file = os.path.expanduser("~/.local/share/conductor/hermes.json")
+        try:
+            cached = json.load(open(cache_file)).get("items", {})
+        except FileNotFoundError:
+            ledger = json.load(open(os.path.expanduser("~/.local/share/conductor/ledger.json")))
+            cached = ledger.get("hermes", {}).get("items", {})
+        current = {i["headline"] for i in out}
+        print(json.dumps({"mtime": board["mtimeISO"], "items": [i for i in out if i["headline"] not in cached],
+                          "gone": sorted(h for h in cached if h not in current)}, indent=1))
+        return
+    if "--json" in args:
+        print(json.dumps({"mtime": board["mtimeISO"], "items": out}, indent=1))
+        return
+    print(f"board mtime {board['mtimeISO']} - {len(out)} open {lane} items in FOCUS/NOW/SOON")
+    for i in out:
+        rank = f"F{i['focus_rank']}" if i["focus_rank"] else "  "
+        print(f"{i['section']:<5} {rank} {i['context'][:34]:<34} {i['headline'][:90]}")
+
+
+if __name__ == "__main__":
+    main()

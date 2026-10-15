@@ -1,0 +1,33 @@
+#!/bin/sh
+# Start the conductor as a named background Claude session (if not running), then attach to it.
+# Detach with ← (agent view) or Ctrl+Z; the session keeps running.
+# If the session is replaced while you're attached (watchdog restart, conductor-restart),
+# this reattaches to the new one instead of dropping you at the shell.
+set -e
+conductor_id() {
+  claude agents --json | python3 -c 'import json,sys; print(next((s.get("id") or s["sessionId"][:8] for s in json.load(sys.stdin) if s.get("name")=="conductor"), ""))'
+}
+id=$(conductor_id)
+if [ -z "$id" ]; then
+  cd "$HOME/Work"
+  claude --bg --name conductor --model sonnet --effort low --permission-mode bypassPermissions "/loop /conductor"
+  id=$(conductor_id)
+fi
+while :; do
+  claude attach "$id" || true
+  # Same session still alive on two checks -> you detached on purpose. Gone -> wait up to a
+  # minute for its replacement.
+  same=0 new=""
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    new=$(conductor_id)
+    if [ "$new" = "$id" ]; then
+      same=$((same + 1)); [ $same -ge 2 ] && exit 0
+    elif [ -n "$new" ]; then
+      break
+    fi
+    sleep 3
+  done
+  [ -n "$new" ] && [ "$new" != "$id" ] || exit 0
+  echo "conductor restarted ($id -> $new), reattaching..."
+  id=$new
+done

@@ -1,0 +1,3 @@
+#!/bin/sh
+# Run /triage in a fresh Sonnet session (cheaper than doing it in a long-lived Opus chat).
+exec claude --model sonnet "/triage $*"

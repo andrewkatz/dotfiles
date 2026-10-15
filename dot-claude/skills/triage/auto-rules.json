@@ -1,0 +1,72 @@
+{
+ "_doc": "Rules for `triage-board auto`. tier auto = /triage closes it without asking (after reading the item to confirm); tier check = offered in a one-click checklist. headline/detail are case-insensitive regexes (detail matches against detail + src lines). Learning: `triage-board mark --rule` records agreement; a check rule (or built-in) with 5 agreements in a row is promoted to auto, an auto rule Andrew overrides or undoes is demoted to check. New rules come from Andrew (\"always ...\", origin andrew, tier auto) or from repeated decisions (origin learned, tier check) via `triage-board rule add`.",
+ "rules": [
+  {
+   "id": "routine-notice",
+   "tier": "auto",
+   "action": "done",
+   "reason": "routine notice, nothing to do",
+   "headline": "\\b(statements?|trade confirmations?|disclosures?|notices?|confirmations?)\\b.*\\b(is|are) (ready|available)\\b|\\bstatement is ready\\b|disclosure is available",
+   "origin": "seed"
+  },
+  {
+   "id": "incident-resolved",
+   "tier": "auto",
+   "action": "done",
+   "reason": "alert resolved",
+   "headline": "^Triage (incident #\\d+|.*alarm)",
+   "detail": "\\b(resolved|returned OK|currently OK|back to OK|recovered)\\b",
+   "origin": "seed"
+  },
+  {
+   "id": "standing-sce",
+   "tier": "auto",
+   "action": "remove",
+   "reason": "standing: no SCE bill notices",
+   "headline": "\\b(SCE|Southern California Edison|electricity bill)\\b",
+   "origin": "seed"
+  },
+  {
+   "id": "standing-drop",
+   "tier": "auto",
+   "action": "remove",
+   "reason": "standing: no DROP status emails",
+   "headline": "\\bDROP list\\b",
+   "origin": "seed"
+  },
+  {
+   "id": "standing-aws-free-tier",
+   "tier": "auto",
+   "action": "remove",
+   "reason": "standing: no AWS Free Tier",
+   "headline": "\\bAWS\\b.*\\bFree Tier\\b|\\bFree Tier usage\\b",
+   "origin": "seed"
+  },
+  {
+   "id": "bill-ready",
+   "tier": "check",
+   "action": "done",
+   "reason": "bill/statement notice",
+   "headline": "^Review (the )?(\\w+ )?(bill|invoice|statement)\\b",
+   "origin": "seed"
+  },
+  {
+   "id": "vendor-maintenance",
+   "tier": "check",
+   "action": "done",
+   "reason": "vendor maintenance/service notice",
+   "headline": "^Review (EC2|RDS|ElastiCache|AWS) .*(maintenance|service update|reboot)",
+   "origin": "seed"
+  }
+ ],
+ "builtin_tiers": {
+  "stale": "check"
+ },
+ "stats": {
+  "stale": {
+   "accepted": 14,
+   "rejected": 1,
+   "streak": 0
+  }
+ }
+}

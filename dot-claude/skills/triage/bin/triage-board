@@ -1,0 +1,329 @@
+#!/usr/bin/env python3
+"""Walk Andrew's Hermes priority board for /triage. Read-only toward the board; state is local.
+
+  triage-board next [SCOPE...] [-n 4]   next unreviewed items as JSON
+  triage-board mark HEADLINE ACTION [NOTE]   record that an item was handled this run
+  triage-board stats [SCOPE...]         counts: open / reviewed / due
+  triage-board auto [SCOPE...]          due items with an obvious decision (rules in ../auto-rules.json
+                                        + built-in: linked task done, event date passed, duplicate, stale)
+  triage-board mark ... --rule ID --suggested ACTION   also record whether Andrew agreed with rule ID;
+                                        rules promote (check->auto) and demote (auto->check) from this
+  triage-board rule add JSON            add a rule {id, tier, action, reason, headline[, detail], origin}
+  triage-board rules                    rule table with accepted/rejected counts
+
+Items linked to an open (todo/in_progress) developerly task are hidden - the conductor's pipeline
+owns them - unless SCOPE includes "tracked". Items linked to a DONE task stay: the board says open
+while the work says done, which needs a decision.
+
+SCOPE words (combine freely): work, personal, now, soon, waiting, stale, tracked, untracked (items the
+conductor flagged as VIA code work with no developerly task), or a lane/context substring like
+"Comfortly" or "Trader Joe". Default: all of Andrew's open items,
+NOW -> SOON -> WAITING -> STALE (FOCUS is project-level context, never walked).
+
+An item is due when it was never reviewed, its details changed since review, or the review
+is older than 7 days. Items are keyed by headline (board ids are positional).
+"""
+import datetime, hashlib, json, os, re, sqlite3, sys, time, urllib.request
+
+URL = "https://katz-mini.tail3d1b31.ts.net:8444/api/board"
+STATE = os.path.expanduser("~/.local/share/conductor/triage.json")
+LEDGER = os.path.expanduser("~/.local/share/conductor/ledger.json")
+HERMES_CACHE = os.path.expanduser("~/.local/share/conductor/hermes.json")
+DEVELOPERLY_DB = os.path.expanduser("~/.local/share/developerly/developerly.db")
+TASK_REF = re.compile(r"Developerly task #?(\d+)")
+SECTIONS = [("NOW", "now"), ("SOON", "soon"), ("WAITING ON OTHERS", "waiting"), ("STALE — REVIEW", "stale")]
+REVIEW_TTL = 7 * 86400
+RULES = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "auto-rules.json")
+STALE_DAYS = 21
+MONTHS = {m: i + 1 for i, m in enumerate("jan feb mar apr may jun jul aug sep oct nov dec".split())}
+DATE_RE = re.compile(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.? (\d{1,2})\b(?!:)", re.I)
+ISO_RE = re.compile(r"\b(20\d\d)-(\d\d)-(\d\d)\b")
+EVENT_RE = re.compile(r"\b(day|appointment|meeting|event|call|webinar|effective|volunteer|trunk|party|visit|session|class|game|concert|tour|interview|(mon|tues|wednes|thurs|fri|satur|sun)day)\b", re.I)
+HISTORY_RE = re.compile(r"\b(requested|since|arrived|committed|asked|sent|received|promised|from|moved|last|overdue)\b[^,;]*$", re.I)
+PROMOTE_AT, DEMOTE_AT = 5, 1
+BUILTIN = {"task-done": "auto", "duplicate": "auto", "date-event": "auto", "date-deadline": "check", "stale": "check"}
+DEADLINE_RE = re.compile(r"\b(due|deadline|by|before|expires?|expir\w+|renew\w*|pay|payment|submit|claim|file)\b", re.I)
+
+
+def load(path, default):
+    try:
+        return json.load(open(path))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return default
+
+
+def save_state(state):
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    tmp = STATE + ".tmp"
+    json.dump(state, open(tmp, "w"), indent=1)
+    os.replace(tmp, STATE)
+
+
+def fingerprint(item):
+    return hashlib.sha1(json.dumps([item.get("detail", []), item.get("src", [])], sort_keys=True).encode()).hexdigest()[:12]
+
+
+def items(scope):
+    with urllib.request.urlopen(URL, timeout=20) as r:
+        board = json.load(r)
+    rank = {}
+    for f in board.get("focus", []):
+        for ids in f.get("matched", {}).values():
+            for i in ids:
+                rank.setdefault(i, {"n": f["n"], "headline": f["headline"]})
+    sections = {k for _, k in SECTIONS if k in scope} or {k for _, k in SECTIONS}
+    lanes = {w for w in scope if w in ("work", "personal")}
+    only_untracked = "untracked" in scope
+    terms = [w for w in scope if w not in ("work", "personal", "untracked", "tracked") and w not in {k for _, k in SECTIONS}]
+    show_tracked = "tracked" in scope
+    verdicts = load(HERMES_CACHE, {}).get("items") or load(LEDGER, {}).get("hermes", {}).get("items", {})
+    statuses = task_statuses()
+    out = []
+    for title, key in SECTIONS:
+        if key not in sections:
+            continue
+        for s in board["sections"]:
+            if s["title"] != title:
+                continue
+            for it in s["items"]:
+                if it.get("done") or it.get("owner") not in (None, "Andrew"):
+                    continue
+                lane = "personal" if it.get("personal") else "work"
+                if lanes and lane not in lanes:
+                    continue
+                ctx = it.get("context", "")
+                verdict = verdicts.get(it["headline"], {})
+                task_id = verdict.get("local_id")
+                if not task_id:
+                    refs = TASK_REF.findall(" ".join(it.get("detail", [])))
+                    task_id = int(refs[-1]) if refs else None
+                task_status = statuses.get(int(task_id)) if task_id else None
+                if task_status in ("todo", "in_progress") and not show_tracked:
+                    continue
+                if only_untracked and verdict.get("verdict") not in ("untracked", "nudged"):
+                    continue
+                if terms and not any(t.lower() in (ctx + " " + it["headline"]).lower() for t in terms):
+                    continue
+                out.append({
+                    "_dates": [x.get("note") or x.get("raw") or "" for x in it.get("src", [])] + it.get("detail", []),
+                    "headline": it["headline"], "section": key, "lane": lane, "context": ctx,
+                    "focus": rank.get(it["id"]), "detail": it.get("detail", [])[-3:],
+                    "src": [{"note": x.get("note") or x.get("raw"), "url": x.get("url")} for x in it.get("src", [])],
+                    "developerly": task_id, "task_status": task_status,
+                    "conductor": verdict.get("verdict"),
+                    "fp": fingerprint(it),
+                })
+    done_keys = {}
+    for s in board["sections"]:
+        for it in s["items"]:
+            if it.get("done"):
+                raw = it.get("raw", "")
+                head = raw.split("] ", 1)[1] if "] " in raw else raw
+                m = ISO_RE.match(raw)
+                done_keys.setdefault(key_of(head), m.group(0) if m else "")
+    ITEMS_CTX["done_keys"] = done_keys
+    return out, board["mtimeISO"]
+
+
+ITEMS_CTX = {}
+
+
+def key_of(headline):
+    return re.sub(r"\W+", " ", headline.split(" \u2014 ")[0]).strip().lower()
+
+
+def headline_dates(text, today):
+    """Calendar dates named in text (month-name or ISO), year inferred near today."""
+    out = []
+    for m in DATE_RE.finditer(text):
+        mon, day = m.groups()
+        if HISTORY_RE.search(text[:m.start()]):
+            continue  # "requested Sep 18", "promised since Aug 4": history, not an event
+        try:
+            d = datetime.date(today.year, MONTHS[mon[:3].lower()], int(day))
+        except ValueError:
+            continue
+        if (d - today).days > 180:
+            d = d.replace(year=d.year - 1)
+        elif (today - d).days > 180:
+            d = d.replace(year=d.year + 1)
+        out.append(d)
+    return out
+
+
+def last_activity(item):
+    stamps = [datetime.date(int(y), int(m), int(d)) for t in item["_dates"] for y, m, d in ISO_RE.findall(t)]
+    return max(stamps) if stamps else None
+
+
+def classify(item, rules, state, today, tiers):
+    c = _classify(item, rules, state, today)
+    if c and c[3] in BUILTIN:
+        c = (tiers.get(c[3], BUILTIN[c[3]]),) + c[1:]
+    return c
+
+
+def _classify(item, rules, state, today):
+    """-> (tier, action, reason, rule_id) for an obvious decision, or None."""
+    h, details = item["headline"], " ".join(item["_dates"])
+    if item.get("focus") or item.get("conductor") in ("untracked", "nudged"):
+        return None  # FOCUS is Andrew's; untracked code work is a task-creation decision
+    if item.get("task_status") == "done":
+        return ("auto", "done", f"Developerly task {item['developerly']} is done", "task-done")
+    for r in rules:
+        if re.search(r["headline"], h, re.I) and (not r.get("detail") or re.search(r["detail"], details, re.I)):
+            return (r["tier"], r["action"], r["reason"], r["id"])
+    k = key_of(h)
+    prior = state["reviewed"].get(next((x for x in state["reviewed"] if key_of(x) == k and x != h), ""), {})
+    if prior.get("action") in ("done", "removed", "remove", "auto-done", "auto-remove"):
+        when = datetime.date.fromtimestamp(prior["at"]).isoformat()
+        return ("auto", "done", f"duplicate of an item closed {when}", "duplicate")
+    if k in ITEMS_CTX.get("done_keys", {}):
+        return ("auto", "done", f"duplicate of a DONE item ({ITEMS_CTX['done_keys'][k] or 'earlier'})", "duplicate")
+    tail = h.split(" \u2014 ", 1)[1] if " \u2014 " in h else ""
+    dates = headline_dates(tail, today)
+    if dates and max(dates) < today:
+        label = max(dates).strftime("%b %-d")
+        if EVENT_RE.search(h) and not DEADLINE_RE.search(h):
+            return ("auto", "done", f"date passed ({label})", "date-event")
+        return ("check", "done", f"date passed ({label})", "date-deadline")
+    last = last_activity(item)
+    if item["section"] != "now" and last and (today - last).days > STALE_DAYS:
+        return ("check", "done", f"stale: no activity since {last.strftime('%b %-d')}", "stale")
+    return None
+
+
+def task_statuses():
+    try:
+        con = sqlite3.connect(f"file:{DEVELOPERLY_DB}?mode=ro", uri=True)
+        return dict(con.execute("select id, status from tasks"))
+    except sqlite3.Error:
+        return {}
+
+
+CLOSE = {"done": "close", "auto-done": "close", "remove": "close", "removed": "close", "auto-remove": "close"}
+
+
+def save_rules(conf):
+    tmp = RULES + ".tmp"
+    json.dump(conf, open(tmp, "w"), indent=1)
+    os.replace(tmp, RULES)
+
+
+def learn(rule, suggested, action):
+    """Count agreement with a rule's suggestion; promote/demote its tier."""
+    conf = load(RULES, {"rules": []})
+    st = conf.setdefault("stats", {}).setdefault(rule, {"accepted": 0, "rejected": 0, "streak": 0})
+    agreed = CLOSE.get(action, action) == CLOSE.get(suggested or "done", suggested)
+    if agreed:
+        st["accepted"] += 1; st["streak"] = st.get("streak", 0) + 1
+    else:
+        st["rejected"] += 1; st["streak"] = 0
+    r = next((x for x in conf["rules"] if x["id"] == rule), None)
+    tier = r["tier"] if r else conf.setdefault("builtin_tiers", {}).get(rule, BUILTIN.get(rule, "check"))
+    new = tier
+    if tier == "check" and st["streak"] >= PROMOTE_AT:
+        new = "auto"
+    elif tier == "auto" and not agreed:
+        new = "check"
+    msg = f"rule {rule}: {'agreed' if agreed else 'overridden'} (+{st['accepted']} -{st['rejected']})"
+    if new != tier:
+        if r:
+            r["tier"] = new
+        else:
+            conf["builtin_tiers"][rule] = new
+        st["streak"] = 0
+        msg += f"; {'PROMOTED to auto' if new == 'auto' else 'DEMOTED to check'}"
+    save_rules(conf)
+    return msg
+
+
+def due(item, state, now):
+    seen = state["reviewed"].get(item["headline"])
+    # marked closed but still open on the board: the close didn't stick or Hermes re-admitted it
+    reopened = seen and seen["action"] in ("done", "removed", "auto-done", "auto-remove") and now - seen["at"] > 300
+    return not seen or reopened or seen["fp"] != item["fp"] or now - seen["at"] > REVIEW_TTL
+
+
+def main():
+    args = sys.argv[1:]
+    cmd = args.pop(0) if args else "next"
+    state = load(STATE, {"reviewed": {}})
+    now = time.time()
+    if cmd == "rules":
+        conf = load(RULES, {})
+        st = conf.get("stats", {})
+        for rid, tier in BUILTIN.items():
+            t = conf.get("builtin_tiers", {}).get(rid, tier)
+            print(f"{rid:<26} {t:<5} {'built-in':<8} +{st.get(rid, {}).get('accepted', 0)} -{st.get(rid, {}).get('rejected', 0)}")
+        for r in conf.get("rules", []):
+            print(f"{r['id']:<26} {r['tier']:<5} {r.get('origin', 'seed'):<8} +{st.get(r['id'], {}).get('accepted', 0)} -{st.get(r['id'], {}).get('rejected', 0)}  {r['reason']}")
+        return
+    if cmd == "rule" and args[:1] == ["add"]:
+        r = json.loads(args[1])
+        for k in ("id", "tier", "action", "reason", "headline"):
+            if not r.get(k):
+                sys.exit(f"rule needs {k}")
+        if r["tier"] not in ("auto", "check") or r["action"] not in ("done", "remove"):
+            sys.exit("tier must be auto|check, action done|remove")
+        re.compile(r["headline"]); re.compile(r.get("detail") or "")
+        conf = load(RULES, {"rules": []})
+        if any(x["id"] == r["id"] for x in conf["rules"]) or r["id"] in BUILTIN:
+            sys.exit(f"rule id {r['id']} exists")
+        r.setdefault("origin", "learned")
+        r["added"] = datetime.date.today().isoformat()
+        conf["rules"].append(r)
+        save_rules(conf)
+        print(f"rule added: {r['id']} ({r['tier']})")
+        return
+    if cmd == "mark":
+        rule = suggested = None
+        if "--rule" in args:
+            i = args.index("--rule"); rule = args[i + 1]; del args[i:i + 2]
+        if "--suggested" in args:
+            i = args.index("--suggested"); suggested = args[i + 1]; del args[i:i + 2]
+        headline, action = args[0], args[1]
+        note = args[2] if len(args) > 2 else ""
+        if rule:
+            print(learn(rule, suggested, action))
+        fp = next((i["fp"] for i in items([])[0] if i["headline"] == headline), "")
+        state["reviewed"][headline] = {"at": now, "fp": fp, "action": action, "note": note}
+        save_state(state)
+        print(f"marked: {action}")
+        return
+    n = 4
+    if "-n" in args:
+        n = int(args[args.index("-n") + 1])
+        del args[args.index("-n"):args.index("-n") + 2]
+    scope = [a.lower() for a in args]
+    found, mtime = items(scope)
+    pending = [i for i in found if due(i, state, now)]
+    if cmd == "auto":
+        conf = load(RULES, {})
+        rules, tiers = conf.get("rules", []), conf.get("builtin_tiers", {})
+        today = datetime.date.today()
+        out = {"auto": [], "check": []}
+        for i in pending:
+            c = classify(i, rules, state, today, tiers)
+            if c:
+                out[c[0]].append({"headline": i["headline"], "section": i["section"], "lane": i["lane"],
+                                  "action": c[1], "reason": c[2], "rule": c[3], "detail": i["detail"][-1:],
+                                  "src": i["src"][-1:]})
+        print(json.dumps({"due": len(pending), **{k: len(v) for k, v in out.items()}, **out}, indent=1))
+        return
+    for i in pending:
+        i.pop("_dates", None)
+    if cmd == "stats":
+        every = found if "tracked" in scope else items(scope + ["tracked"])[0]
+        tracked = [i for i in every if i["task_status"] in ("todo", "in_progress")]
+        count = lambda xs: {k: sum(1 for i in xs if i["section"] == k) for _, k in SECTIONS}
+        print(json.dumps({"board_mtime": mtime, "on_board": len(every), "tracked": len(tracked),
+                          "open": len(every) - len(tracked), "due": len(pending),
+                          "by_section": {k: {"on_board": a, "tracked": t, "due": d} for (_, k), a, t, d in
+                                         zip(SECTIONS, count(every).values(), count(tracked).values(), count(pending).values())}}))
+        return
+    print(json.dumps({"board_mtime": mtime, "due": len(pending), "items": pending[:n]}, indent=1))
+
+
+if __name__ == "__main__":
+    main()

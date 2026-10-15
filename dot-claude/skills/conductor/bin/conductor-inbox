@@ -1,0 +1,32 @@
+#!/usr/bin/env python3
+"""Print the conductor's open questions and recent decisions. Answer them in the conductor session: "Q3: abandon"."""
+import json, os, sys
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from importlib.machinery import SourceFileLoader
+_fu = SourceFileLoader("cfu", os.path.join(os.path.dirname(os.path.realpath(__file__)), "conductor-followup")).load_module()
+task_label = _fu.task_label
+ledger = json.load(open(os.path.expanduser("~/.local/share/conductor/ledger.json")))
+qs = [q for q in ledger.get("questions", []) if q.get("status") == "open"]
+qs.sort(key=lambda q: (not q.get("blocking"), int(q["id"][1:])))
+blocking = sum(1 for q in qs if q.get("blocking"))
+fu = ledger.get("andrew_followups") or {}
+fus = [f for f in (fu.values() if isinstance(fu, dict) else []) if f.get("status") == "open"]
+if fus:
+    print(f"To do ({len(fus)}) - say \"F<n> done\" in the conductor when done")
+    for f in fus:
+        print(f"{f['id']} {task_label(f.get('task')) or '-'}: {f['who'] + ': ' if f.get('who') else ''}{f['what']}")
+        if f.get("draft"):
+            print("     draft: " + f["draft"].replace("\n", "\n            "))
+    print()
+print(f"Needs you ({len(qs)} open, {blocking} blocking) - answer in the conductor: \"Q<n>: <answer>\"")
+for q in qs:
+    tag = "[blocking] " if q.get("blocking") else ""
+    rec = f"  rec: {q['recommendation']}" if q.get("recommendation") else ""
+    print(f"{q['id']} {tag}{q['question']}{rec}")
+    if q.get("options"):
+        print(f"     options: {' / '.join(q['options'])}")
+ds = ledger.get("decisions", [])[-int(sys.argv[1]) if len(sys.argv) > 1 else -5:]
+if ds:
+    print("\nRecent decisions (override with \"D<n>: ...\"):")
+    for d in ds:
+        print(f"{d['id']} {task_label(d.get('task'))}: {d['decision']}")

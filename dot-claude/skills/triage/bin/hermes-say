@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Send one message to Hermes on katz-mini and print its final reply.
+#   hermes-say [--new] < message.txt     (HERMES_SESSION_FILE=... to keep a separate conversation, e.g. the desk's)
+# Uses a dedicated Hermes API session per triage run (not the board UI's chat session), stored in
+# ~/.local/share/conductor/triage-hermes-session. --new starts a fresh one. The API key is read on
+# katz-mini and never leaves it. Exit 1 if Hermes errors or returns nothing.
+set -euo pipefail
+SESSION_FILE="${HERMES_SESSION_FILE:-$HOME/.local/share/conductor/triage-hermes-session}"
+mkdir -p "$(dirname "$SESSION_FILE")"
+[[ ${1:-} == --new ]] && rm -f "$SESSION_FILE"
+sid=$(cat "$SESSION_FILE" 2>/dev/null || true)
+message=$(cat)
+[[ -n $message ]] || { echo "empty message" >&2; exit 1; }
+
+result=$(printf '%s' "$message" | ssh -o ConnectTimeout=10 katz-mini "SID='$sid' python3 -c '
+import json, os, sys, urllib.request
+key = next(l.split(\"=\", 1)[1].strip() for l in open(os.path.expanduser(\"~/.hermes/.env\")) if l.startswith(\"API_SERVER_KEY=\"))
+base = \"http://127.0.0.1:8642\"
+def req(path, body):
+    r = urllib.request.Request(base + path, data=json.dumps(body).encode(), method=\"POST\",
+        headers={\"Authorization\": \"Bearer \" + key, \"Content-Type\": \"application/json\"})
+    return urllib.request.urlopen(r, timeout=600)
+sid = os.environ.get(\"SID\") or \"\"
+msg = sys.stdin.read()
+def run(sid):
+    final, err = None, None
+    with req(\"/api/sessions/%s/chat/stream\" % sid, {\"message\": msg}) as resp:
+        event = None
+        for raw in resp:
+            line = raw.decode(\"utf-8\", \"replace\").rstrip(\"\\n\")
+            if line.startswith(\"event: \"):
+                event = line[7:]
+            elif line.startswith(\"data: \") and event in (\"assistant.completed\", \"run.failed\", \"error\"):
+                data = json.loads(line[6:])
+                if event == \"assistant.completed\":
+                    final = data.get(\"content\")
+                else:
+                    err = data
+    return final, err
+if not sid:
+    sid = json.load(req(\"/api/sessions\", {\"source\": \"api_server\"}))[\"session\"][\"id\"]
+try:
+    final, err = run(sid)
+except urllib.error.HTTPError as e:
+    if e.code != 404:
+        raise
+    sid = json.load(req(\"/api/sessions\", {\"source\": \"api_server\"}))[\"session\"][\"id\"]
+    final, err = run(sid)
+print(json.dumps({\"sid\": sid, \"reply\": final, \"error\": err}))
+'")
+printf '%s' "$result" | python3 -c 'import json,sys; d=json.load(sys.stdin); open(sys.argv[1],"w").write(d["sid"]);
+if d["error"] or not d["reply"]: print("hermes error:", d["error"] or "empty reply", file=sys.stderr); sys.exit(1)
+print(d["reply"])' "$SESSION_FILE"

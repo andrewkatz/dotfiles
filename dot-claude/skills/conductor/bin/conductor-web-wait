@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Monitor command for the dispatcher: block until Andrew sends something from the web dashboard
+# (ledger.web_queue), print ONE line with all of it, and exit. Prints "still waiting" after 25 min (re-arm).
+#   web: Q50: Done - merge when gates pass ⏎ Q54: Close 2134 as cannot-reproduce
+HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+Q="$HOME/.local/share/conductor/ledger.json"
+for _ in $(seq 750); do
+  if python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("web_queue") else 1)' "$Q" 2>/dev/null; then
+    "$HERE/conductor-ledger" take web_queue | python3 -c 'import json,sys; m=json.load(sys.stdin) or []; print("web: " + " ⏎ ".join(x["text"].replace("\n"," ") for x in m))'
+    exit 0
+  fi
+  sleep 2
+done
+echo "still waiting"

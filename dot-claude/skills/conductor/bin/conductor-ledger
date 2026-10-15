@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""Locked, atomic access to the conductor ledger. Use this instead of reading/writing the JSON by hand.
+
+  conductor-ledger get [PATH]            print JSON at PATH (default: hot summary, see below)
+  conductor-ledger set PATH JSON         replace value at PATH
+  conductor-ledger merge PATH JSON       shallow-merge a JSON object into PATH (creates it)
+  conductor-ledger append PATH JSON      append to the list at PATH (creates it)
+  conductor-ledger del PATH              delete PATH
+  conductor-ledger take PATH             print JSON at PATH and delete it, atomically ([] / {} if missing)
+  conductor-ledger next-id PREFIX        allocate the next id for Q / D / J (e.g. Q31) and print it
+  conductor-ledger log TASK ACTION [DETAIL]   append one line to ledger.log
+  conductor-ledger summary               compact view: active tasks, open questions, jobs, overrides
+
+PATH is dot-separated: tasks.2110.stage, questions, overrides.pins, hermes.items.
+Top-level keys live in separate files so routine reads stay small:
+  hermes -> hermes.json (board verdict cache), done -> done.json, archive -> archive.json
+  (answered questions, old decisions), everything else -> ledger.json.
+"""
+import datetime, fcntl, json, os, sys
+from contextlib import contextmanager
+
+DIR = os.path.expanduser("~/.local/share/conductor")
+FILES = {"hermes": "hermes.json", "done": "done.json", "archive": "archive.json"}
+MAIN = "ledger.json"
+
+
+def file_for(path):
+    return os.path.join(DIR, FILES.get(path.split(".")[0], MAIN))
+
+
+@contextmanager
+def locked():
+    os.makedirs(DIR, exist_ok=True)
+    with open(os.path.join(DIR, ".lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
+def read(f):
+    try:
+        return json.load(open(f))
+    except FileNotFoundError:
+        return {}
+
+
+def write(f, data):
+    tmp = f + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(data, fh, indent=1)
+    os.replace(tmp, f)
+
+
+def walk(data, keys, create=False):
+    for k in keys:
+        if k not in data:
+            if not create:
+                raise KeyError(".".join(keys))
+            data[k] = {}
+        data = data[k]
+    return data
+
+
+def load_doc(path):
+    f = file_for(path)
+    doc = read(f)
+    top = path.split(".")[0]
+    if f != os.path.join(DIR, MAIN):
+        doc = {top: doc}
+    return f, doc
+
+
+def save_doc(f, path, doc):
+    top = path.split(".")[0]
+    write(f, doc[top] if f != os.path.join(DIR, MAIN) else doc)
+
+
+def summary():
+    led = read(os.path.join(DIR, MAIN))
+    tasks = {k: {x: v.get(x) for x in ("stage", "session", "base", "pr", "job") if v.get(x) is not None}
+             for k, v in led.get("tasks", {}).items()}
+    qs = [{k: q.get(k) for k in ("id", "task", "blocking", "question")} for q in led.get("questions", []) if q.get("status") == "open"]
+    return {"tasks": tasks, "open_questions": qs, "jobs": led.get("jobs", {}),
+            "overrides": led.get("overrides", {}), "last_order_review": led.get("last_order_review")}
+
+
+def main():
+    a = sys.argv[1:]
+    if not a or a[0] == "summary":
+        print(json.dumps(summary(), indent=1))
+        return
+    cmd = a[0]
+    with locked():
+        if cmd == "log":
+            entry = {"ts": datetime.datetime.now().isoformat(timespec="seconds"), "task": a[1], "action": a[2],
+                     "detail": a[3] if len(a) > 3 else ""}
+            with open(os.path.join(DIR, "ledger.log"), "a") as fh:
+                fh.write(json.dumps(entry) + "\n")
+            return
+        if cmd == "next-id":
+            prefix = a[1]
+            f = os.path.join(DIR, MAIN)
+            doc = read(f)
+            n = doc.setdefault("next_ids", {}).get(prefix, 1)
+            doc["next_ids"][prefix] = n + 1
+            write(f, doc)
+            print(f"{prefix}{n}")
+            return
+        if cmd == "get" and len(a) == 1:
+            print(json.dumps(summary(), indent=1))
+            return
+        path = a[1]
+        keys = path.split(".")
+        f, doc = load_doc(path)
+        if cmd == "take":
+            try:
+                parent = walk(doc, keys[:-1])
+                val = parent.pop(keys[-1])
+            except KeyError:
+                print("[]")
+                return
+            save_doc(f, path, doc)
+            print(json.dumps(val, indent=1))
+            return
+        if cmd == "get":
+            print(json.dumps(walk(doc, keys), indent=1))
+            return
+        parent = walk(doc, keys[:-1], create=True)
+        if cmd == "set":
+            parent[keys[-1]] = json.loads(a[2])
+        elif cmd == "merge":
+            parent.setdefault(keys[-1], {}).update(json.loads(a[2]))
+        elif cmd == "append":
+            parent.setdefault(keys[-1], []).append(json.loads(a[2]))
+        elif cmd == "del":
+            parent.pop(keys[-1], None)
+        else:
+            sys.exit(f"unknown command {cmd}")
+        save_doc(f, path, doc)
+        print("ok")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyError as e:
+        sys.exit(f"not found: {e}")

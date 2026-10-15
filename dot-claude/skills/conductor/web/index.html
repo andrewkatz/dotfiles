@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conductor</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='%233b82f6'/></svg>">
+<style>
+:root {
+  --bg: #f7f7f5; --panel: #ffffff; --text: #1d1d1b; --muted: #6b6b66; --line: #e4e4df;
+  --accent: #2563eb; --red: #c2410c; --red-bg: #fff4ed; --amber: #a16207; --green: #15803d;
+  --chip: #f0f0ec; --code: #f4f4f0;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141413; --panel: #1d1d1b; --text: #ececea; --muted: #9a9a94; --line: #2e2e2b;
+    --accent: #60a5fa; --red: #fb923c; --red-bg: #2a1d14; --amber: #facc15; --green: #4ade80;
+    --chip: #262624; --code: #232321;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif; }
+main { max-width: 980px; margin: 0 auto; padding: 20px 16px 60px; }
+header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 26px 0 10px; font-weight: 600; }
+.meta { color: var(--muted); font-size: 13px; }
+.pill { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--chip); font-size: 12px; color: var(--muted); }
+.pill.on { color: var(--green); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; }
+.card.urgent { border-color: var(--red); background: var(--red-bg); }
+.row { display: flex; gap: 10px; align-items: flex-start; }
+.row .grow { flex: 1; min-width: 0; }
+.id { font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); white-space: nowrap; padding-top: 2px; }
+.who { font-weight: 600; }
+.small { font-size: 12px; color: var(--muted); }
+.draft { margin-top: 8px; background: var(--code); border-radius: 6px; padding: 8px 10px; white-space: pre-wrap; font-size: 13px; }
+button { font: inherit; font-size: 13px; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:disabled { opacity: .5; cursor: default; }
+.btns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+input[type=text] { font: inherit; font-size: 13px; flex: 1; min-width: 0; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); }
+form { display: flex; gap: 6px; margin-top: 8px; }
+.rec { color: var(--green); }
+.sent { margin-top: 6px; font-size: 12px; color: var(--amber); }
+table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+td { padding: 7px 10px; border-top: 1px solid var(--line); vertical-align: top; }
+tr:first-child td { border-top: 0; }
+td.n { font: 600 12px ui-monospace, Menlo, monospace; white-space: nowrap; }
+.stage { font-size: 12px; white-space: nowrap; }
+.rush { color: var(--red); font-weight: 700; }
+.group td { background: var(--chip); font-size: 12px; color: var(--muted); font-weight: 600; }
+.empty { color: var(--muted); padding: 10px 0; }
+.v-same, .v-minor, .v-skip-correct { color: var(--green); } .v-different, .v-no-reply, .v-missed { color: var(--amber); } .v-wrong { color: var(--red); }
+details > summary { cursor: pointer; list-style: none; } details > summary::-webkit-details-marker { display: none; }
+.cmp { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; } @media (max-width: 640px) { .cmp { grid-template-columns: 1fr; } }
+.err { color: var(--red); }
+.hide-sm { }
+@media (max-width: 640px) { .hide-sm { display: none; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Conductor</h1>
+    <span id="status" class="pill">…</span>
+    <span id="meta" class="meta"></span>
+    <span style="flex:1"></span>
+    <button id="notify" hidden>Enable alerts</button>
+  </header>
+  <div id="error" class="err"></div>
+  <h2 id="needs-h">Waiting on you</h2>
+  <div id="needs"></div>
+
+  <h2>In flight</h2>
+  <div id="tasks"></div>
+
+  <h2>Message the conductor</h2>
+  <div class="card">
+    <form id="say">
+      <input type="text" id="say-text" placeholder="Q12: merge it · F3 done · look into …">
+      <button class="primary">Send</button>
+    </form>
+    <div class="small" style="margin-top:6px">Reaches the conductor within seconds. Replies show up in your /desk session (or the conductor window if no desk is open).</div>
+  </div>
+
+  <h2>Shadow drafts <span class="small" style="text-transform:none;letter-spacing:0">· replies drafted for you, never sent, graded against what you actually sent</span></h2>
+  <div id="shadow"><div class="empty">Loading…</div></div>
+
+  <h2>Recent decisions</h2>
+  <div id="decisions"></div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id)
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+const link = (s) => esc(s).replace(/https?:\/\/[^\s)<]+/g, (u) => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`)
+const tname = (id) => { if (!id) return ''; const t = last?.titles?.[String(id)]; return t ? `${esc(t)} <span class="small">(${esc(id)})</span>` : 'task ' + esc(id) }
+const clock = (iso) => iso ? new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' }).replace(' ', '').toLowerCase() : ''
+let last = null, seen = null, busy = false
+
+async function post(path, body) {
+  const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Conductor': '1' }, body: JSON.stringify(body) })
+  const j = await r.json()
+  if (!r.ok) throw new Error(j.error || r.status)
+  return j
+}
+
+function sentFor(ref) {
+  return (last?.sent || []).filter((s) => s.ref === ref).map((s) => `<div class="sent">sent ${clock(s.ts)}: ${esc(s.text)} · waiting for the conductor</div>`).join('')
+}
+
+function render(d) {
+  last = d
+  const fus = d.followups || []
+  const qs = [...(d.questions || [])].sort((a, b) => (b.blocking ? 1 : 0) - (a.blocking ? 1 : 0))
+  const blocking = qs.filter((q) => q.blocking).length
+  const count = fus.length + qs.length
+  document.title = (blocking + fus.length ? `(${blocking + fus.length}) ` : '') + 'Conductor'
+  $('status').textContent = d.conductor
+  $('status').className = 'pill' + (d.conductor === 'busy' || d.conductor === 'idle' || d.conductor === 'running' ? ' on' : '')
+  $('meta').textContent = `${d.working} working (${d.limit})${d.rush ? ` + ${d.rush} rush` : ''} · updated ${clock(d.now)} PST`
+  $('needs-h').textContent = `Waiting on you (${count})`
+
+  let h = ''
+  for (const q of qs) {
+    const opts = (q.options || []).map((o) => `<button data-say="${esc(q.id + ': ' + o)}" data-ref="${esc(q.id)}">${esc(o)}</button>`).join('')
+    h += `<div class="card ${q.blocking ? 'urgent' : ''}"><div class="row"><span class="id">${esc(q.id)}</span><div class="grow">
+      <div>${q.blocking ? '<b>Blocking</b> · ' : ''}${q.task ? tname(q.task) + ' · ' : ''}${link(q.question)}</div>
+      ${q.recommendation ? `<div class="small rec">Recommended: ${esc(q.recommendation)}</div>` : ''}
+      ${opts ? `<div class="btns">${opts}</div>` : ''}
+      <form data-ref="${esc(q.id)}"><input type="text" placeholder="Answer ${esc(q.id)}…"><button>Send</button></form>
+      ${sentFor(q.id)}</div></div></div>`
+  }
+  for (const f of fus) {
+    h += `<div class="card urgent"><div class="row"><span class="id">${esc(f.id)}</span><div class="grow">
+      <div>${f.task ? tname(f.task) + ' · ' : ''}${f.who ? `<span class="who">${esc(f.who)}</span>: ` : ''}${link(f.what)}</div>
+      ${f.draft ? `<div class="draft">${esc(f.draft)}</div>` : ''}
+      <div class="btns">${f.draft ? `<button data-copy="${esc(f.id)}">Copy draft</button>` : ''}<button class="primary" data-done="${esc(f.id)}">Done</button></div>
+      </div></div></div>`
+  }
+  $('needs').innerHTML = h || '<div class="empty">Nothing waiting on you.</div>'
+
+  const groups = [['Working', 'working'], ['Deploying / live', 'flight'], ['Waiting', 'waiting']]
+  let t = ''
+  for (const [title, g] of groups) {
+    const rows = d.tasks.filter((x) => x.group === g)
+    if (!rows.length) continue
+    t += `<tr class="group"><td colspan="4">${title} (${rows.length})</td></tr>`
+    for (const x of rows) {
+      const flags = [x.pr, x.job ? 'job ' + x.job.split('-')[0] : '', x.rounds ? 'r' + x.rounds : '', ...(x.questions || [])].filter(Boolean).join(' · ')
+      const sub = g === 'waiting' && x.resume_when ? 'resumes when: ' + x.resume_when : x.last
+      t += `<tr><td class="n">${x.rush ? '<span class="rush" title="rush: outside the limit">!</span>' : ''}${esc(x.id)}</td>
+        <td class="stage">${esc(x.stage)}<div class="small">${esc(x.since)}</div></td>
+        <td><div>${esc(x.title)}</div><div class="small">${esc(x.project)}${flags ? ' · ' + esc(flags) : ''}</div>${sub ? `<div class="small">${link(sub)}</div>` : ''}</td>
+        <td class="small hide-sm">${esc(x.worker)}</td></tr>`
+    }
+  }
+  $('tasks').innerHTML = t ? `<table>${t}</table>` : '<div class="empty">Nothing in flight.</div>'
+
+  $('decisions').innerHTML = (d.decisions || []).map((x) => `<div class="card"><div class="row"><span class="id">${esc(x.id)}</span><div class="grow">
+    <div>${x.task ? tname(x.task) + ' · ' : ''}${link(x.decision)}</div>${x.why ? `<div class="small">${esc(x.why)}</div>` : ''}
+    <form data-ref="${esc(x.id)}" data-prefix="${esc(x.id)}: "><input type="text" placeholder="Override ${esc(x.id)}…"><button>Send</button></form>${sentFor(x.id)}
+    </div></div></div>`).join('') || '<div class="empty">None yet.</div>'
+
+  alertNew(d)
+}
+
+function alertNew(d) {
+  const ids = new Set([...(d.followups || []).map((f) => f.id), ...(d.questions || []).filter((q) => q.blocking).map((q) => q.id)])
+  if (seen && 'Notification' in window && Notification.permission === 'granted') {
+    const fresh = [...ids].filter((i) => !seen.has(i))
+    if (fresh.length) new Notification('Conductor needs you', { body: fresh.join(', ') + ' · open the Conductor tab' })
+  }
+  seen = ids
+}
+
+async function load() {
+  if (busy) return
+  busy = true
+  try {
+    const r = await fetch('/api/state', { cache: 'no-store' })
+    const j = await r.json()
+    if (!r.ok) throw new Error(j.error || r.status)
+    $('error').textContent = ''
+    if (!document.activeElement || document.activeElement.tagName !== 'INPUT' || !document.activeElement.value) render(j)
+  } catch (e) {
+    $('error').textContent = 'Refresh failed: ' + e.message
+  } finally { busy = false }
+}
+
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('button')
+  if (!b || b.form) return
+  try {
+    if (b.dataset.done) { b.disabled = true; await post('/api/followup/done', { id: b.dataset.done }); await load() }
+    else if (b.dataset.say) { b.disabled = true; await post('/api/say', { text: b.dataset.say, ref: b.dataset.ref }); await load() }
+    else if (b.dataset.copy) {
+      const f = last.followups.find((x) => x.id === b.dataset.copy)
+      await navigator.clipboard.writeText(f.draft); b.textContent = 'Copied'
+    }
+  } catch (err) { $('error').textContent = err.message; b.disabled = false }
+})
+
+document.addEventListener('submit', async (e) => {
+  e.preventDefault()
+  const form = e.target, input = form.querySelector('input'), text = input.value.trim()
+  if (!text) return
+  const ref = form.dataset.ref || null
+  const full = form.id === 'say' ? text : (form.dataset.prefix || (ref ? ref + ': ' : '')) + text
+  try { await post('/api/say', { text: full, ref }); input.value = ''; input.blur(); await load() }
+  catch (err) { $('error').textContent = err.message }
+})
+
+if ('Notification' in window && Notification.permission === 'default') {
+  $('notify').hidden = false
+  $('notify').onclick = () => Notification.requestPermission().then(() => { $('notify').hidden = true })
+}
+async function loadShadow() {
+  try {
+    const d = await (await fetch('/api/shadow', { cache: 'no-store' })).json()
+    const c = d.counts || {}
+    let h = `<div class="small" style="margin-bottom:8px">${c.graded || 0} graded · ${c.drafted || 0} waiting for your reply · ${c.pending || 0} to draft</div>`
+    if ((d.table || []).length) {
+      h += '<table><tr class="group"><td>Kind</td><td>Who</td><td>Sendable</td><td class="hide-sm">same / minor / different / wrong · missed · no reply</td></tr>'
+      for (const r of d.table) {
+        h += `<tr><td>${esc(r.category)}${r.candidate ? ' <span class="rec">ready to promote</span>' : ''}</td><td>${esc(r.audience)}</td>
+          <td><b>${r.sendable_pct == null ? '–' : r.sendable_pct + '%'}</b> <span class="small">of ${r.judged}</span></td>
+          <td class="small hide-sm">${r.same} / ${r.minor} / ${r.different} / ${r.wrong} · ${r.missed} · ${r.no_reply}</td></tr>`
+      }
+      h += '</table>'
+    }
+    for (const i of d.recent || []) {
+      h += `<details class="card"><summary><span class="v-${esc(i.verdict)}"><b>${esc(i.verdict)}</b></span> · ${esc(i.sender)} · <span class="small">${esc(i.context)} · ${esc(i.category)}/${esc(i.audience)} · ${esc(i.time_pst)}</span>
+        ${i.diff ? `<div class="small">${esc(i.diff)}</div>` : ''}</summary>
+        <div class="draft">${link(i.text)}</div>
+        <div class="cmp"><div><div class="small">Draft</div><div class="draft">${esc(i.draft || '')}</div></div>
+        <div><div class="small">You sent</div><div class="draft">${esc(i.actual || '(no reply)')}</div></div></div>
+        ${i.link ? `<div class="small" style="margin-top:6px"><a href="${esc(i.link)}" target="_blank" rel="noopener">open thread</a></div>` : ''}</details>`
+    }
+    $('shadow').innerHTML = h
+  } catch (e) { $('shadow').innerHTML = '<div class="empty">Shadow drafts unavailable.</div>' }
+}
+load()
+loadShadow()
+setInterval(load, 15000)
+setInterval(loadShadow, 60000)
+</script>
+</body>
+</html>
