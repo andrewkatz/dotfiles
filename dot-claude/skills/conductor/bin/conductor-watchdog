@@ -20,7 +20,7 @@ for line in sys.stdin:
         last = u.get("input_tokens", 0) + u.get("cache_read_input_tokens", 0) + u.get("cache_creation_input_tokens", 0)
 print(last)')
 [[ ${ctx:-0} -gt $LIMIT ]] || exit 0
-jobs=$(~/.claude/skills/conductor/bin/conductor-ledger get jobs 2>/dev/null | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null || echo 0)
+jobs=$(~/.claude/skills/conductor/bin/conductor-ledger get jobs 2>/dev/null | python3 -c 'import json,sys; print(sum(1 for v in json.load(sys.stdin).values() if v))' 2>/dev/null || echo 0)
 [[ $jobs == 0 ]] || exit 0
 echo "$(date '+%F %T') context $ctx > $LIMIT, idle, no jobs - restarting" >> ~/.local/share/conductor/watchdog.log
 ~/.claude/skills/conductor/bin/conductor-restart

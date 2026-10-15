@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+"""Find work the conductor dropped: things that should be moving and aren't.
+
+  conductor-audit            one line per problem, with the fix (the tick runs this first and handles every line)
+  conductor-audit --new      only problems not reported in the last 30 min (conductor-web-wait uses this to wake
+                             the dispatcher without nagging about the same thing every 5 minutes)
+
+Checks: green PRs left unmerged, idle workers in a working stage, failed launches, waiting tasks whose
+condition already happened, investigations left open, free slots with todo work, ledger/developerly drift,
+stale job entries, malformed ledger keys.
+"""
+import datetime, json, os, re, subprocess, sys, time
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+DIR = os.path.expanduser("~/.local/share/conductor")
+SEEN = os.path.join(DIR, "audit-seen.json")
+PER_PROJECT, TOTAL = 4, 6
+PAUSED_PROJECTS = {"Inn Management"}
+WORKING = {"spec", "implementing", "testing", "qa", "review", "shipping"}
+WAITING = {"waiting", "escalated", "blocked", "parked"}
+IDLE_MIN, LAUNCH_MIN, GREEN_MIN, JOB_HOURS = 15, 10, 10, 3
+
+
+def ts(s):
+    """Ledger times: naive local ISO, or with an offset/Z. -> epoch seconds (None if unparseable)."""
+    if not s:
+        return None
+    s = str(s).replace("Z", "+00:00")
+    s = re.sub(r"([+-]\d{2})(\d{2})$", r"\1:\2", s)
+    try:
+        d = datetime.datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    return d.timestamp()
+
+
+def mins(epoch):
+    return (time.time() - epoch) / 60 if epoch else None
+
+
+def sync(*args):
+    r = subprocess.run([os.path.join(HERE, "conductor-sync"), "--json", *args], capture_output=True, text=True, timeout=120)
+    return json.loads(r.stdout or "[]")
+
+
+def pr_green(pr, cwd):
+    try:
+        r = subprocess.run(["gh", "pr", "view", str(pr), "--json", "state,mergeable,statusCheckRollup"],
+                           capture_output=True, text=True, timeout=60, cwd=cwd if cwd and os.path.isdir(cwd) else None)
+        d = json.loads(r.stdout)
+    except Exception:  # noqa: BLE001
+        return False
+    if d.get("state") != "OPEN" or d.get("mergeable") == "CONFLICTING":
+        return False
+    checks = [c.get("conclusion") or c.get("status") for c in d.get("statusCheckRollup") or []]
+    return bool(checks) and all(c in ("SUCCESS", "SKIPPED", "NEUTRAL") for c in checks)
+
+
+def main():
+    led = json.load(open(os.path.join(DIR, "ledger.json")))
+    tasks = led.get("tasks", {})
+    last = {}  # task id -> epoch of its latest ledger.log entry
+    try:
+        for line in open(os.path.join(DIR, "ledger.log")):
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            t = ts(e.get("ts"))
+            if t:
+                last[str(e.get("task"))] = max(last.get(str(e.get("task")), 0), t)
+    except FileNotFoundError:
+        pass
+    live = {str(s["local_id"]): s for s in sync()}
+    todo = [t for t in sync("--todo") if t.get("status") == "todo" and t.get("project") not in PAUSED_PROJECTS]
+    jobs = {k: v for k, v in (led.get("jobs") or {}).items() if v}
+    running = {str(v.get("task")) for v in jobs.values() if not v.get("ended") and "done" not in str(v.get("status", ""))}
+    followups = led.get("andrew_followups") or {}
+    questions = led.get("questions") or {}
+    qs = questions.values() if isinstance(questions, dict) else questions
+    open_ids = {f["id"] for f in followups.values() if f.get("status", "open") == "open"} | \
+               {q["id"] for q in qs if isinstance(q, dict) and q.get("status") in ("open", "asked")}
+    out = []
+
+    for k in tasks:
+        if not k.isdigit():
+            out.append(f"ledger key tasks.{k!r} isn't a bare id -> merge it into the real task and delete it")
+
+    for tid, t in tasks.items():
+        if not isinstance(t, dict) or not tid.isdigit():
+            continue
+        stage, s = t.get("stage"), live.get(tid)
+        name = f"{(t.get('title') or (s or {}).get('title') or '')[:60]} ({tid})"
+        since = ts(t.get("since")) or ts(t.get("launched_at"))
+        quiet = mins(max(last.get(tid, 0), since or 0)) or 0
+        if stage in WORKING and tid not in running:
+            if s is None or not s.get("session"):
+                if stage != "spec" and (mins(since) or 0) > LAUNCH_MIN:
+                    out.append(f"{name}: stage {stage} but no worker session -> launch check: find the error, relaunch")
+            elif s.get("session_status") == "idle" and quiet > IDLE_MIN:
+                out.append(f"{name}: {stage}, worker idle and nothing logged for {quiet:.0f} min -> take its next step now")
+        if stage == "shipping" and s and s.get("pr_number") and tid not in running and quiet > GREEN_MIN \
+                and pr_green(s["pr_number"], s.get("worktree")):
+            out.append(f"{name}: PR #{s['pr_number']} CI green, not merged -> run its merge gate now")
+        if stage in WAITING:
+            refs = set(re.findall(r"\b[FQ]\d+\b", str(t.get("resume_when") or "")))
+            if refs and not (refs & open_ids):
+                out.append(f"{name}: {stage} on {', '.join(sorted(refs))}, all closed -> advance it (resume_when: {str(t.get('resume_when'))[:80]})")
+            elif not refs and not t.get("resume_when") and not any(q.get("task") in (tid, int(tid)) for q in qs if isinstance(q, dict) and q.get("id") in open_ids):
+                out.append(f"{name}: {stage} with no resume_when and no open question -> give it a way back or move it")
+        if stage == "findings" and any(str(f.get("task")) == tid for f in followups.values()) and tid not in running:
+            out.append(f"{name}: findings delivered -> complete the investigation (or launch its fix)")
+        if stage in ("done", "dropped") and s and s.get("status") == "in_progress":
+            out.append(f"{name}: ledger says {stage}, developerly still in progress -> complete it in developerly")
+        if stage == "parked" and s and s.get("session_status") == "busy":
+            out.append(f"{name}: parked but its worker is busy -> update the stage")
+
+    for tid, s in live.items():
+        if tid not in tasks and s.get("project") not in PAUSED_PROJECTS:
+            out.append(f"{s.get('title', '')[:60]} ({tid}): in progress in developerly, not in the ledger -> adopt it or complete it")
+
+    for k, v in jobs.items():
+        started = ts(v.get("started"))
+        if started and (mins(started) or 0) > JOB_HOURS * 60 and str(v.get("task")) in running:
+            out.append(f"job {k} started {v.get('started')} still listed -> if it's not running, delete jobs.{k}")
+
+    busy = {}
+    for tid, t in tasks.items():
+        s = live.get(tid)
+        if isinstance(t, dict) and t.get("stage") in WORKING and not t.get("expedite") and \
+                (tid in running or (s and s.get("session_status") == "busy")):
+            busy[t.get("project") or (s or {}).get("project")] = busy.get(t.get("project") or (s or {}).get("project"), 0) + 1
+    total = sum(busy.values())
+    for proj in sorted({t["project"] for t in todo}):
+        free = min(PER_PROJECT - busy.get(proj, 0), TOTAL - total)
+        if free > 0:
+            n = sum(1 for t in todo if t["project"] == proj)
+            out.append(f"{proj}: {busy.get(proj, 0)} actually running, {n} todo -> launch into {free} free slot(s) now")
+
+    if "--new" in sys.argv:
+        seen = {}
+        try:
+            seen = json.load(open(SEEN))
+        except (FileNotFoundError, ValueError):
+            pass
+        now = time.time()
+        key = lambda line: re.sub(r"\d+ min", "", line)  # noqa: E731
+        fresh = [line for line in out if now - seen.get(key(line), 0) > 1800]
+        seen = {k: v for k, v in seen.items() if now - v < 86400}
+        seen.update({key(line): now for line in fresh})
+        json.dump(seen, open(SEEN, "w"))
+        out = fresh
+    for line in out:
+        print(line)
+
+
+if __name__ == "__main__":
+    main()

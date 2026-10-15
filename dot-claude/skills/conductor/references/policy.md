@@ -20,7 +20,7 @@ What the conductor is allowed to do and how it decides. Every job reads this (th
 
 ## Limits
 
-- **6 working tasks total, max 4 per project** (raised 2026-10-14: Andrew wants every task moving, not one task at a time). **Working** = a worker or gate can make progress right now: `spec`, `implementing`, `testing`, `qa`, `review`, `shipping`. These **never** count: `deploying`, `live`, and anything waiting on Andrew or on someone else (`escalated`, `parked`, `blocked`, a stage whose only next step is an open blocking question, or a task Andrew is driving himself, such as 2150). Count working tasks from the ledger stages, not from `conductor-sync`'s in_progress list.
+- **6 working tasks total, max 4 per project** (raised 2026-10-14: Andrew wants every task moving, not one task at a time). **Working** = something is actually running right now: the worker session is busy (`conductor-sync` shows `busy`, or it's waiting on its own long command), or a gate/review/QA job for the task is running. The goal is 4 things actively running per project at all times (Andrew, 2026-10-15: "seems like we're just twiddling our thumbs"). A task whose worker is idle waiting on the conductor (a re-review, a ship instruction, a merge) or on CI does **not** count. That waiting is the conductor's to clear at once, not a reason to hold a slot. These also **never** count: `deploying`, `live`, and anything waiting on Andrew or on someone else (`escalated`, `parked`, `blocked`, a stage whose only next step is an open blocking question, or a task Andrew is driving himself, such as 2150). Count working tasks from the ledger stages, not from `conductor-sync`'s in_progress list.
 - **Fill every free slot each tick.** If 3 slots are free, return 3 `gate <task> spec` jobs in one `jobs:` line (they run in parallel). Never leave a slot empty while launchable todo tasks exist. A todo task that can't launch yet (no base label, unclear spec) gets its question queued and is skipped. It doesn't hold the queue.
 - **Every waiting task needs a way back.** An `escalated`/`parked`/`blocked` task must have an open question or a recorded `resume_when` (what un-blocks it, and who). With neither, the tick queues a question. If it's been waiting more than 4 hours with no change, the tick re-asks once with a "park it / drop it / here's the answer" question.
 - **Rush tasks skip the limits** (Andrew, 2026-10-15). A task with `expedite: true` launches the moment it's created, even when every slot is full or its project is at 4, and it never counts toward 6/4. Never park or pre-empt another task to make room. Rush tasks also go first everywhere else: their gates run before other tasks' gates in each tick, and they take the next QA run for their project.
@@ -33,7 +33,7 @@ What the conductor is allowed to do and how it decides. Every job reads this (th
 - Workers message you back (your session name is `conductor`). Their reports are claims, not evidence - every gate is checked by someone other than the worker (you, a subagent, CI, or the deploy).
 - Workers can't invoke `/ship` or `/qa` (they're user-only commands). Tell them to read and follow `~/.claude/commands/ship.md` / `qa.md` instead.
 - `session_status: waiting` means the worker is blocked on a permission prompt or question in its pane - you can't answer it by message. Escalate to Andrew with the tmux session name.
-- No session for an in_progress task: relaunch is `developerly work-items launch local:<local_id> --agent=claude --prompt=...` only if its worktree is gone; otherwise queue a question ("session died, worktree at X").
+- No session for an in_progress task: relaunch it yourself, don't ask. If the worktree is gone, use `developerly work-items launch local:<local_id> --agent=claude --prompt=...`. If it exists, relaunch in it with the original prompt plus "Resume: check `git log`/`git status` for work already done". Log it. Ask only if the worktree has uncommitted changes that a relaunch could overwrite.
 - Worker protocol (paste into every launch prompt and send to existing workers when you adopt them): `references/worker-protocol.md`.
 
 ## Safe to merge
@@ -71,7 +71,7 @@ Escalating doesn't stop the pipeline: get the task to "ready to merge" with all 
 Andrew reads questions in one place, not in your running output. Never ask a question in prose mid-tick.
 
 **Default: decide, don't ask.** Andrew's goal (2026-10-14) is to keep everything moving without waiting on him. Ask only when a decision **absolutely needs him**:
-1. **Access only he can give:** credentials, a login, a manual step in a third-party UI. Ask once, then record the answer in `projects.md` so it's never asked again.
+1. **Access only he can give:** credentials, or a login the browser agent couldn't get past. A manual step in a third-party site goes to a `browser` job first ("Manual web steps"); it's a question only if that fails. Ask once, then record the answer in `projects.md` so it's never asked again.
 2. **The escalation list** in "Safe to merge" and the "Never automate" lists in `projects.md`.
 3. **Abandoning** a task he created.
 4. **A product decision with no signal:** options lead to materially different behavior for clients, and nothing in the task, linked board item, code, docs, past decisions or comparable features says which he'd pick. Q15 (whether a public report shows filter definitions) is the example.
@@ -87,7 +87,7 @@ Andrew reads questions in one place, not in your running output. Never ask a que
 
 **Queue**: `ledger.questions` is a list of
 `{id: "Q<n>", task, question, options: [...], recommendation, blocking: true|false, meanwhile, asked_at, status: "open"|"answered"|"withdrawn", answer}`.
-- IDs never get reused (`ledger.next_q`, `ledger.next_d`). One question per entry: split compound questions.
+- IDs never get reused: get every new one from `conductor-ledger next-id Q` / `next-id D` (never count or write ids yourself). One question per entry: split compound questions.
 - Write it so it can be answered in a few words without context: name the task by title (never only by id, since Andrew doesn't know them), state the options, give your recommendation.
 - `blocking: true` → that task stops at its current stage until answered; other tasks keep moving. `meanwhile` says what you're doing instead.
 - When something changes so the question no longer matters, set `withdrawn`.
@@ -105,13 +105,31 @@ Andrew reads questions in one place, not in your running output. Never ask a que
 
 **PushNotification** otherwise only when something broke (failed deploy, live regression). Everything else waits for the morning summary.
 
+## Manual web steps: a browser agent does them (Andrew, 2026-10-15)
+
+When a task needs a step in a web UI (a vendor console, an admin page, Sentry, Google Admin, AWS console, CORE or VIA admin, a settings page), a browser agent does it by default. It's a follow-up for Andrew only when the agent can't do it.
+- **How:** return `jobs: browser <task> "<the step, with the URL if known>"`. The `browser` job (jobs.md) uses the conductor's own Google Chrome profile via `bin/browser-worker`. It's hidden, so it never takes Andrew's focus, and logins persist once he has signed in to a site.
+- **Sign-in needed** (first time on a site, or the session expired): the agent runs `browser-worker signin <url> "<what shows you're signed in>"`. That opens one visible Chrome window, tells Andrew via `print:`/`push:` ("Sign in to <site> in the Chrome window that just opened; I'll continue"), waits up to 30 min, then goes hidden again and carries on. If he doesn't sign in, it becomes a follow-up: "Sign in to <site> so the agent can <step>". That never means "do the step yourself".
+- **Still needs his OK first:** anything on the escalation list ("Safe to merge"): secrets/credentials, production data writes, deletions, billing. The same goes for payments, accepting terms, and changing passwords, 2FA or account security. The agent prepares everything up to the final click, takes a screenshot, and queues one question ("Approve: <exact action>?"). After a yes, a new browser job finishes it.
+- **Stay on task:** only the sites the step needs. Never browse his email, chat or bank in it, even though the profile may be signed in.
+- **Not possible in a browser** (a phone call, a conversation, something physical, a site that blocks automation): then it's a follow-up, with what the agent tried.
+
 ## Follow-ups for Andrew
 
 Some tasks leave Andrew something to do himself: email a client that the fix is live, tell the person who reported a bug what was wrong, reply on a thread, resolve an alert in a third-party UI, do a manual step after a deploy. These aren't questions (nothing to decide), and they must never get lost, so they go through `bin/conductor-followup`, which sends each one to his phone (Telegram) and pins it in red in the conductor view until he clears it.
 
-- **Only for what Andrew must do personally:** talk to a person, act in a UI or account only he can reach, or run something on the "Never automate" lists. Code work, checks and investigations are never follow-ups, even small ones. They become tasks (see "Create" above). Note that `conductor-followup add` refuses text that asks him to create tasks or use /triage.
+- **Only for what Andrew must do personally:** talk to a person, or something a browser agent couldn't do (see "Manual web steps"). A manual web step is a `browser` job first, never a follow-up straight away. Code work, checks and investigations are never follow-ups, even small ones. They become tasks (see "Create" above). An investigation's *result* is the exception: it always gets a follow-up (see "Investigation results" below). Note that `conductor-followup add` refuses text that asks him to create tasks or use /triage.
 - **When:** at `done` (and for investigations, when findings come in), check the task's description, its rush request, the linked board item (`src:` names who raised it and on which thread), and the worker's reports for (1) someone waiting on the outcome (a client, a teammate, whoever reported it), (2) a promise to let someone know, or (3) a manual step only Andrew can do. One follow-up per person or step.
-- **How:** write a short draft in his tone (brief, direct; what changed and what they should do now, no internal details) to a scratch file, then `conductor-followup add --task <id> --who "<name exactly as the source shows it>" --what "<one line: what to do and why>" --draft <file>`. Never guess a name; with no name, describe the role ("whoever reported it on the Acme thread"). Never send email or messages to anyone yourself; drafts are text for Andrew.
+- **Draft format.** A draft is the message exactly as it would be sent, so write it for the recipient's eyes:
+  - Name the channel in `--what` ("Reply by email to…", "Reply in Google Chat to…") and format for it:
+    - Email: greeting line, blank line, body, blank line, "Andrew".
+    - Google Chat / Slack: never a greeting or sign-off. Just the message, 1-3 lines (a short list is fine when there are several numbers).
+  - Lead with the answer in one plain sentence. Then the why, in short paragraphs (1-3 sentences each) separated by blank lines.
+  - Three or more numbers or items go in a bulleted list, one per line, never strung together with semicolons.
+  - Plain words. Spell out abbreviations the recipient might not use; never internal terms (task ids, hygiene, buckets, stage names).
+  - Notes to Andrew ("attach the table when it arrives", "check X first") go in `--what`, never inside the draft.
+- **How:** write the draft (format above, his tone: brief, direct) to a scratch file, then `conductor-followup add --task <id> --who "<name exactly as the source shows it>" --what "<one line: what to do and why>" --draft <file>`. Never guess a name; with no name, describe the role ("whoever reported it on the Acme thread"). Never send email or messages to anyone yourself; drafts are text for Andrew.
+- **Investigation results** (Andrew, 2026-10-15: "No follow-up was created, so how would I know it was done?" and "Even if there's nothing for me to send or do, if it's just getting an answer to something, I need a follow-up so I know where to check when a result comes in"): **every** investigation or question Andrew asked for (rush, `investigate`, a desk question handed to the conductor) **must** end with a follow-up on his dashboard that holds the answer: the result in 1-3 plain lines plus where the full findings are. This applies even when there's nothing for him to do. When someone is waiting on the answer, the follow-up also carries the reply, drafted per "Draft format"; when nobody is, its `--what` starts with "Answer:". An `update:`/`print:`/`push:` alone never counts, because only follow-ups stay on his dashboard. He clears it once he's read it.
 - Don't hold the task for it. Complete as usual; the follow-up outlives the task.
 - **Clearing:** Andrew says `F3 done` (or "sent it", naming the task) → `conductor-followup done F3`. Never clear one yourself, except that a follow-up whose recipient has visibly heard already (Andrew's sent reply on the board item) is cleared with a `D<n>`.
 - The `daily` job runs `conductor-followup remind` (re-sends anything open and not sent in 20h) and lists open follow-ups at the top of the summary.

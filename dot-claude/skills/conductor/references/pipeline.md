@@ -85,7 +85,13 @@ cd <project repo path> && developerly work-items launch local:<local_id> --agent
   --prompt="$(printf '%s\n\n%s\n\n%s' "Your task is local id <local_id>. Use \"task <local_id>\" in every report to conductor. <title>" "<description + acceptance criteria>" "$(cat ~/.claude/skills/conductor/references/worker-protocol.md)")"
 ```
 
+**React, don't wait for the next tick.** When a worker pushes a PR, return a `monitor:` line for its CI run (`conductor-watch-run <owner/repo> <run-id> ci-<task>`, with the run id from `gh run list --branch <branch> --limit 1 --json databaseId`), just like deploys, so a green CI triggers the merge decision within minutes. A worker's `implemented`/`fixed` report triggers its gate job right away. A PR with green CI should never sit unmerged for longer than one gate job takes.
+
+Before each launch, run `docker network prune -f` (it removes only networks no container uses). Every worktree leaves a compose network behind, and Docker runs out of addresses at about 30, which kills the next launch at pre-start (2197 sat dead for 2h on 2026-10-15). Record `launched_at` in the ledger.
+
 The session appears in `conductor-sync` once Claude starts; record its name in the ledger on the next tick.
+
+**Launch check:** a task isn't "working" until its worker has sent `started`. On every tick, a task launched more than 10 minutes ago with no `started` report and no live session in `conductor-sync` failed to launch. Read the launch output or the session pane for the error, fix what's mechanical (prune Docker networks, recreate a broken worktree), relaunch, and log it. Don't count it against the limits until it starts. If it fails twice, create a follow-up with the error.
 
 ## Rush tasks
 
@@ -102,12 +108,12 @@ Andrew asks for something to start now (`rush` job, see `jobs.md`). The job does
 5. **Launch** right away, per "Launching" (cd into the repo), with this added to the prompt above the worker protocol for investigations: "This is an investigation. Report findings before changing code: message conductor `task <id> findings:` then root cause, evidence, impact and recommended fix (≤8 lines). Production access is read-only: summaries only, no writes, no backfills, no deploys. Don't open a PR unless the conductor tells you to fix it." Use `--model opus` for investigations.
 6. Return `print: rush <id> started: <title> (<project>, base <base>)`.
 
-**Findings** (`task <id> findings:` from the worker) go to Andrew at once: the `gate <id> findings` job sends them as a follow-up (`conductor-followup add --what "Findings for <title>: <root cause>" --draft <findings + recommended fix, plus a reply to whoever reported it if someone did>`), so they reach his phone, and also returns them in `print:`. Then decide by default, recording a `D<n>`:
+**Findings** (`task <id> findings:` from the worker) go to Andrew at once: the `gate <id> findings` job sends them as a follow-up always, even when there's nothing for him to do (`policy.md` "Investigation results"; required, not optional) (`conductor-followup add --what "Findings for <title>: <root cause>" --draft <findings + recommended fix, plus a reply to whoever reported it if someone did>`), so they reach his phone, and also returns them in `print:`. Then decide by default, recording a `D<n>`:
 - **Small, clear fix inside authority** (same repo, under ~200 lines, nothing on the escalation list): the same task continues as the fix (`type: fix`, still `expedite`). Send the worker "fix it", then run the normal gates from `testing` on. A production bug on VIA ships to `main` (base-check rules still apply).
 - **Larger fix, or one needing a decision from him:** create a follow-up task with the findings as its spec (normal priority unless he said "fix it now", in which case also rush it), link it in the ledger, and complete the investigation task.
 - **Nothing to fix** (working as intended, or a data or client issue): complete the investigation task.
 
-**Completing an investigation with no code:** the `live` gate doesn't apply. Once findings are relayed to Andrew and the worktree has no unpushed commits (`git status --porcelain` clean, nothing on the branch that matters), run `work-items complete` as in "done" and record the findings as the evidence. This is the one completion that doesn't need live evidence.
+**Completing an investigation with no code:** the `live` gate doesn't apply. Once findings are relayed to Andrew (a follow-up holding the answer must exist in `andrew_followups` for this task; check with `conductor-followup list` before completing, and create it if it's missing) and the worktree has no unpushed commits (`git status --porcelain` clean, nothing on the branch that matters), run `work-items complete` as in "done" and record the findings as the evidence. This is the one completion that doesn't need live evidence.
 
 **Andrew follows up** ("rush 2201: also check X", "dig deeper") through `command`: relay the words to the worker verbatim.
 

@@ -16,7 +16,7 @@ Top-level keys live in separate files so routine reads stay small:
   hermes -> hermes.json (board verdict cache), done -> done.json, archive -> archive.json
   (answered questions, old decisions), everything else -> ledger.json.
 """
-import datetime, fcntl, json, os, sys
+import datetime, fcntl, json, os, re, sys
 from contextlib import contextmanager
 
 DIR = os.path.expanduser("~/.local/share/conductor")
@@ -101,6 +101,9 @@ def main():
             f = os.path.join(DIR, MAIN)
             doc = read(f)
             n = doc.setdefault("next_ids", {}).get(prefix, 1)
+            n = max([n, int(doc.pop("next_" + prefix.lower(), 0))] + [  # never reuse: skip past any id already used
+                int(m) + 1 for name in (MAIN, "archive.json") if os.path.exists(os.path.join(DIR, name))
+                for m in re.findall(r'"id":\s*"' + re.escape(prefix) + r'(\d+)"', open(os.path.join(DIR, name)).read())])
             doc["next_ids"][prefix] = n + 1
             write(f, doc)
             print(f"{prefix}{n}")
@@ -110,6 +113,8 @@ def main():
             return
         path = a[1]
         keys = path.split(".")
+        if cmd != "get" and keys[0] == "tasks" and len(keys) > 1 and not keys[1].isdigit():
+            sys.exit(f"refused: task key must be the bare id (tasks.2216), not {keys[1]!r}")
         f, doc = load_doc(path)
         if cmd == "take":
             try:
