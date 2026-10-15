@@ -21,6 +21,8 @@ jobs: gate 2110 testing; review 2109   (follow-up jobs the dispatcher should spa
 print: <text for Andrew>   (status/summary text to show verbatim; omit if none). Andrew-facing text (print:, push:, questions, follow-ups) names every task in words first and the id in parentheses after: "the shipment line-items fix (2170) started", never "Task 2170 started". Andrew doesn't know task ids. The `done:` line is for the ledger and keeps ids..
 ```
 
+Times: the Mac's clock is Pacific. Write local times as-is with the label "PST" (e.g. "1:10pm PST"), never "PDT", and never convert a local time a second time. Convert only UTC/server timestamps.
+
 Every job: before starting, `conductor-ledger merge jobs.<job-id> '{"kind":..,"task":..,"started":..}'`; set `tasks.<id>.job` to the job id for a single-task job; on exit delete both. Skip any task whose `tasks.<id>.job` is set by another job.
 
 ## Kinds
@@ -44,7 +46,7 @@ Mechanical pipeline bookkeeping. Steps:
 2. `bin/conductor-sync --json`. Reconcile: new in_progress tasks → `untriaged`; done in developerly → move the entry to `done.<id>`.
 3. **Audit first:** run `~/.claude/skills/conductor/bin/conductor-audit` and resolve **every** line it prints in this tick: merge, re-review, relaunch, advance, complete, launch, delete stale job entries. Don't explain a line away. If one is a false alarm, fix the ledger field that misleads it (e.g. a `resume_when` naming a closed Q/F). The tick isn't done until a re-run prints nothing you could have acted on. Then **every** task gets a step each tick, not just the first or the busiest. Go in developerly order and skip only tasks with a running job. For each, take the next **mechanical** step from `pipeline.md`: relay findings to workers, nudge idle workers, send ship instructions, run `conductor-base-check`, find deploy runs (return a `monitor:` line), complete tasks whose `live` evidence is recorded, handle `expedite` tasks first (their worker messages, findings and gates go to the front, and a `task <id> findings:` message becomes `print:` + `push:` + `jobs: gate <id> findings`, and that gate always ends with an answer follow-up; never complete an investigation task that has no follow-up in `andrew_followups`), count working slots per `policy.md` Limits (expedite tasks excluded) and launch into **every** free slot (one `gate <task> spec` per slot, all in one `jobs:` line), check waiting tasks for a way back (Limits), and run the "Launch check" from `pipeline.md` (launched more than 10 minutes ago, no `started` and no session means it failed: relaunch it). Anything needing judgment → return it in `jobs:` (`gate <task> <stage>` for spec, testing, merge decision, untriaged triage; `qa`, `review`, `live` for those gates).
 4. Hermes: `bin/conductor-board --uncached` (small: only new headlines + gone ones). Judge each new headline (not-eng / untracked / link to a task), prune `gone`, and for new FOCUS/NOW `untracked` items return `push: <n> new NOW items look like VIA dev work - run /triage untracked`. Never use `--json` here.
-5. Run due `ledger.followups` (status pending, due <= today and past the due time; time in `due_at`): do the `what`, then set status done. Sentry access: `conductor-ledger get sentry_access`.
+5. Run due `ledger.followups` (status pending, due <= today and past the due time; time in `due_at`): do the `what`, then set status done. Sentry: `bin/conductor-sentry` (see `live`).
 6. `conductor-ledger log` one line per action.
 
 ### gate
@@ -57,7 +59,7 @@ QA jobs must never use blanket `pkill`/`killall` (e.g. `pkill -f vite`): it kill
 `code-review` skill at high on `<base>...HEAD` in the worktree; record findings; relay correctness findings to the worker; return `done:` with counts.
 
 ### live
-Live checks from `projects.md` for the deployed task; record evidence; regression → queue a blocking question + `push:`.
+Live checks from `projects.md` for the deployed task; record evidence; regression → queue a blocking question + `push:`. Sentry (VIA): always `~/.claude/skills/conductor/bin/conductor-sentry new-since <deploy finish time, ISO with offset>` (checks via + via-javascript; `issue <id>` / `resolve <id>` for one issue). Never search for the token file or call the API another way.
 
 ### daily
 The "Daily" section of `policy.md`, including `conductor-followup remind` and open follow-ups first in the summary, and Hermes daily from `hermes.md` (use `conductor-board --json` here - once a day). Return the summary in `print:` and one `push:`.

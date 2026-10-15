@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Sentry checks for live jobs, always the same way. Reads ~/.config/sentry-to-developerly.env
+# (SENTRY_AUTH_TOKEN, SENTRY_ORG_SLUG, SENTRY_PROJECT_SLUGS); never prints the token.
+#
+#   conductor-sentry new-since <ISO time with offset, e.g. 2026-10-15T13:10:00-07:00> [project ...]
+#        unresolved issues first seen since then (default projects: via, via-javascript), one per line
+#   conductor-sentry issue <issue id>          one issue as JSON (title, status, count, lastSeen, permalink)
+#   conductor-sentry resolve <issue id>        mark it resolved
+set -euo pipefail
+ENV="$HOME/.config/sentry-to-developerly.env"
+[[ -r $ENV ]] || { echo "missing $ENV" >&2; exit 1; }
+set -a; . "$ENV"; set +a
+BASE="${SENTRY_BASE_URL:-https://sentry.io}/api/0"
+api() { curl -fsS -H "Authorization: Bearer $SENTRY_AUTH_TOKEN" "$@"; }
+
+case "${1:-}" in
+  new-since)
+    since=${2:?ISO time with offset}; shift 2
+    projects=("$@"); (( ${#projects[@]} )) || IFS=, read -ra projects <<<"${SENTRY_PROJECT_SLUGS:-via,via-javascript}"
+    q=$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(f"is:unresolved firstSeen:>{sys.argv[1]}"))' "$since")
+    total=0
+    for p in "${projects[@]}"; do
+      out=$(api "$BASE/projects/$SENTRY_ORG_SLUG/$p/issues/?query=$q&limit=50" | python3 -c '
+import json, sys
+for i in json.load(sys.stdin):
+    print("{} {} ({}) x{} first {}: {} {}".format(sys.argv[1], i["shortId"], i["id"], i["count"], i["firstSeen"], i["title"][:120], i["permalink"]))' "$p")
+      [[ -n $out ]] && { echo "$out"; total=$((total + $(wc -l <<<"$out"))); }
+    done
+    echo "$total new unresolved issue(s) since $since in ${projects[*]}" ;;
+  issue)
+    api "$BASE/issues/${2:?issue id}/" | python3 -c '
+import json, sys
+i = json.load(sys.stdin)
+print(json.dumps({k: i.get(k) for k in ("shortId", "title", "status", "count", "firstSeen", "lastSeen", "permalink")}, indent=1))' ;;
+  resolve)
+    api -X PUT -H "Content-Type: application/json" -d '{"status":"resolved"}' "$BASE/issues/${2:?issue id}/" >/dev/null && echo resolved ;;
+  *)
+    sed -n '2,8p' "$0"; exit 1 ;;
+esac

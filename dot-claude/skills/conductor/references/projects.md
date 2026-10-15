@@ -30,7 +30,7 @@ Every developerly project is fully managed (Andrew, 2026-10-14). A project with 
 - **Live checks:**
   - Exercise the acceptance criteria on https://beta.via.tools (or https://app.via.tools for `main`) with agent-browser, headless. Beta (beta.via.tools) login credentials: 1Password item "Giant Partners Platform" in the Katz Family -> Giant Partners vault (per Andrew, Q36). Log in per the `dev-qa` skill's auth notes; if production login isn't possible, queue a question rather than skip.
   - VIA MCP: `job_failures` for the window since deploy; compare against the hour before the deploy.
-  - Sentry: new issues tagged with the release/environment since deploy (`developerly sentry` import or the Sentry UI via agent-browser).
+  - Sentry: `~/.claude/skills/conductor/bin/conductor-sentry new-since <deploy finish time>` (via + via-javascript; token in `~/.config/sentry-to-developerly.env`, read by the script only).
   - Read-only production inspection when needed: the repo's `production-troubleshoot` skill.
 
 ## Inn Management (`~/Work/inn-management`, GitHub `getcomfortly/inn_management`)
