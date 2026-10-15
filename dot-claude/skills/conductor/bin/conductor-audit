@@ -99,6 +99,8 @@ def main():
                     out.append(f"{name}: stage {stage} but no worker session -> launch check: find the error, relaunch")
             elif s.get("session_status") == "idle" and quiet > IDLE_MIN:
                 out.append(f"{name}: {stage}, worker idle and nothing logged for {quiet:.0f} min -> take its next step now")
+        if stage in WORKING and s and str(s.get("pr_state") or "").upper() == "MERGED" and tid not in running:
+            out.append(f"{name}: PR #{s.get('pr_number')} already merged (worker merged it?) -> verify base + head, move to deploying")
         if stage == "shipping" and s and s.get("pr_number") and tid not in running and quiet > GREEN_MIN \
                 and pr_green(s["pr_number"], s.get("worktree")):
             out.append(f"{name}: PR #{s['pr_number']} CI green, not merged -> run its merge gate now")
