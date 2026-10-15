@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Restart the worker for an in-progress task in its existing worktree and tmux session, the same way developerly
+# starts it (developerly's `work-items launch` refuses tasks that are already in progress).
+#   conductor-relaunch <local_id> <prompt-file>
+# The prompt file holds the full launch prompt (task line, description + acceptance, worker protocol). The script
+# prepends "Resume: check git log/status for work already done." Kills any agent still running in the pane first.
+set -euo pipefail
+HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+id=${1:?local id}; prompt_file=${2:?prompt file}
+[[ -s $prompt_file ]] || { echo "empty prompt file" >&2; exit 1; }
+read -r tmux_name worktree < <("$HERE/conductor-sync" --json | python3 -c '
+import json, sys
+s = next((s for s in json.load(sys.stdin) if str(s["local_id"]) == sys.argv[1]), None)
+print(s["tmux"], s["worktree"]) if s and s.get("tmux") and s.get("worktree") else sys.exit(1)' "$id") \
+  || { echo "task $id isn't in progress with a worktree; use developerly work-items launch" >&2; exit 1; }
+[[ -d $worktree ]] || { echo "worktree $worktree is gone; use developerly work-items launch" >&2; exit 1; }
+prompt="Resume: check git log/status for work already done. $(cat "$prompt_file")"
+if tmux has-session -t "=$tmux_name:" 2>/dev/null; then
+  tmux send-keys -t "=$tmux_name:" C-c; sleep 1; tmux send-keys -t "=$tmux_name:" C-c; sleep 1
+  tmux respawn-pane -k -t "=$tmux_name:" -c "$worktree"
+else
+  tmux new-session -d -s "$tmux_name" -c "$worktree"
+fi
+sleep 1
+tmux send-keys -t "=$tmux_name:" -l "claude --dangerously-skip-permissions $(printf '%q' "$prompt")"
+tmux send-keys -t "=$tmux_name:" Enter
+echo "relaunched task $id in $tmux_name ($worktree); expect its 'started' message within 10 min"
