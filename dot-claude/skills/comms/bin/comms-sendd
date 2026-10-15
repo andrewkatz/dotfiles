@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""Comms sender daemon (launchd com.katz.comms-sendd, KeepAlive).
+
+- Telegram: long-polls the comms approval bot and handles Send / Edit / Skip / Stop from Andrew's chat only.
+- Sends approved replies once their hold is over, after re-checking: not paused, under the daily cap,
+  credentials present, and Andrew hasn't already replied in that thread himself.
+- Expires offers nobody acted on within 24h.
+Every send is appended to ~/.local/share/comms/sent.jsonl.
+"""
+import base64, json, os, subprocess, sys, time, traceback
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import comms_lib as L  # noqa: E402
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+OFFSET = os.path.join(L.STATE_DIR, "tg_offset")
+EDITS = os.path.join(L.STATE_DIR, "tg_edits.json")
+EXPIRE_AFTER = 24 * 3600
+
+
+def log(msg):
+    print(f"{time.strftime('%m-%d %H:%M:%S')} {msg}", flush=True)
+
+
+def already_replied(e):
+    """Did Andrew reply in this conversation after the message (per Hermes's last sync)?"""
+    q = [{"id": e["shadow_id"], "source": e["source"], "key": e.get("key") or "", "channel": e.get("channel"),
+          "is_dm": e.get("is_dm"), "ts_epoch": e["msg_ts"]}]
+    try:
+        script = open(os.path.join(HERE, "comms-remote.py")).read()
+        r = subprocess.run(["ssh", "-o", "ConnectTimeout=10", "katz-mini", "python3", "-", "replies",
+                            base64.b64encode(json.dumps(q).encode()).decode()], input=script, capture_output=True,
+                           text=True, timeout=90)
+        return bool(json.loads(r.stdout or "{}"))
+    except Exception:  # noqa: BLE001  (if we can't check, the hold still applies; don't block on katz-mini)
+        return False
+
+
+def send_due():
+    for e in list(L.outbox()["items"].values()):
+        if e["status"] == "proposed" and L.now() - e["created"] > EXPIRE_AFTER:
+            e = L.update(e["id"], status="cancelled", cancel_reason="Expired: nobody acted on it within 24h.")
+            L.telegram_card(e)
+            continue
+        if e["status"] != "holding" or e.get("send_at", 0) > L.now():
+            continue
+        if os.path.exists(L.PAUSED):
+            continue  # stays holding; sends when resumed (still stoppable)
+        reason = ""
+        if L.sent_today() >= L.DAILY_CAP:
+            reason = f"Not sent: daily cap of {L.DAILY_CAP} reached."
+        elif not L.can_send(e["source"]):
+            reason = f"Not sent: no {e['source']} send access set up yet."
+        elif already_replied(e):
+            reason = "Not sent: you already replied in that conversation."
+        if reason:
+            e = L.update(e["id"], status="cancelled", cancel_reason=reason, closed=L.now())
+            L.telegram_card(e)
+            log(f"{e['id']} cancelled: {reason}")
+            continue
+        try:
+            res = L.SENDERS[e["source"]](e)
+            e = L.update(e["id"], status="sent", sent_at=L.now(), result=res)
+            L.log_sent(e, res)
+            note = ""
+            if e.get("approved_by") == "andrew":
+                note = L.record_outcome(e["kind"], "sent-edited" if e.get("edited") else "sent-unedited", e.get("audience"))
+            L.telegram_card(e, note)
+            log(f"{e['id']} sent ({e['source']}, {e['kind']})")
+        except Exception as ex:  # noqa: BLE001
+            e = L.update(e["id"], status="failed", error=str(ex)[:300])
+            L.telegram_card(e)
+            log(f"{e['id']} failed: {ex}")
+
+
+def handle_updates(timeout):
+    c = L.conf("telegram.json")
+    if not c or not c.get("chat_id"):
+        time.sleep(timeout)
+        return
+    try:
+        offset = int(open(OFFSET).read())
+    except (FileNotFoundError, ValueError):
+        offset = 0
+    res = L.tg("getUpdates", offset=offset, timeout=timeout, allowed_updates=["message", "callback_query"])
+    edits = L._read(EDITS, {})
+    for u in (res or {}).get("result", []):
+        offset = u["update_id"] + 1
+        cq, msg = u.get("callback_query"), u.get("message")
+        if cq:
+            if str(cq["message"]["chat"]["id"]) != str(c["chat_id"]):
+                continue  # only Andrew's chat can act
+            action, oid = cq["data"].split(":", 1)
+            items = L.outbox()["items"]
+            if oid not in items:
+                L.tg("answerCallbackQuery", callback_query_id=cq["id"], text="Not found")
+                continue
+            if action == "send":
+                L.approve(oid)
+                L.tg("answerCallbackQuery", callback_query_id=cq["id"], text=f"Sending in {L.HOLD_SECONDS // 60} min")
+            elif action == "skip":
+                L.skip(oid)
+                L.tg("answerCallbackQuery", callback_query_id=cq["id"], text="Skipped")
+            elif action == "stop":
+                L.stop(oid)
+                L.tg("answerCallbackQuery", callback_query_id=cq["id"], text="Stopped")
+            elif action == "edit":
+                p = L.tg("sendMessage", chat_id=c["chat_id"], text=f"Send the new reply for {items[oid].get('sender') or 'this'} "
+                         "as a reply to this message.", reply_markup={"force_reply": True})
+                edits[str(p["result"]["message_id"])] = oid
+                L.tg("answerCallbackQuery", callback_query_id=cq["id"])
+        elif msg and str(msg["chat"]["id"]) == str(c["chat_id"]):
+            to = str((msg.get("reply_to_message") or {}).get("message_id", ""))
+            if to in edits and msg.get("text"):
+                oid = edits.pop(to)
+                L.approve(oid, text=msg["text"])
+                L.tg("sendMessage", chat_id=c["chat_id"], text=f"Got it. Sending your version in {L.HOLD_SECONDS // 60} min.")
+    open(OFFSET, "w").write(str(offset))
+    L._write(EDITS, edits)
+
+
+def main():
+    os.makedirs(L.STATE_DIR, exist_ok=True)
+    log("comms-sendd started")
+    while True:
+        try:
+            handle_updates(20)
+            send_due()
+        except Exception:  # noqa: BLE001
+            log(traceback.format_exc()[-800:])
+            time.sleep(15)
+
+
+if __name__ == "__main__":
+    main()

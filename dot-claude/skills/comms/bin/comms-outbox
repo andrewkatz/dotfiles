@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+"""Andrew's controls for outgoing replies (the desk and dashboard use these too).
+
+  comms-outbox list [--all] [--json]       replies waiting for a decision or about to send
+  comms-outbox send O123 ["new text"]      approve (with an edit if text is given); sends after the 5-min hold
+  comms-outbox skip O123                   don't send this one
+  comms-outbox stop O123                   cancel during the hold
+  comms-outbox levels                      level per kind of message (shadow / one-tap / auto) + streaks
+  comms-outbox promote KIND [auto]         e.g. promote scheduling/internal  (default: one-tap)
+  comms-outbox demote KIND                 back to shadow
+  comms-outbox pause | resume              kill switch: nothing is offered or sent while paused
+  comms-outbox sent [-n 20]                what was sent on Andrew's behalf
+"""
+import json, os, sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import comms_lib as L  # noqa: E402
+
+
+def show(e):
+    when = f" · sends {L.pst(e['send_at'])}" if e["status"] == "holding" else ""
+    print(f"{e['id']} [{e['status']}{when}] {e.get('sender') or ''} · {L.describe_target(e)} · {e['kind']}")
+    print("   they wrote: " + (e.get("incoming") or "").replace("\n", " ")[:160])
+    print("   reply:      " + e["text"].replace("\n", " / ")[:300])
+
+
+def main():
+    a = sys.argv[1:]
+    if not a:
+        sys.exit(__doc__)
+    cmd = a[0]
+    items = L.outbox()["items"]
+    if cmd == "list":
+        rows = [e for e in items.values() if "--all" in a or e["status"] in ("proposed", "holding", "failed")]
+        rows.sort(key=lambda e: e["created"])
+        if "--json" in a:
+            print(json.dumps(rows))
+            return
+        print(("PAUSED - nothing is offered or sent.\n" if os.path.exists(L.PAUSED) else "") + (f"{len(rows)} replies" if rows else "Nothing waiting."))
+        for e in rows:
+            show(e)
+    elif cmd == "send":
+        e = L.approve(a[1], text=a[2] if len(a) > 2 else None)
+        print(f"{e['id']} {e['status']}" + (f", sends at {L.pst(e['send_at'])}" if e["status"] == "holding" else ""))
+    elif cmd == "skip":
+        print(L.skip(a[1])["status"])
+    elif cmd == "stop":
+        print(L.stop(a[1])["status"])
+    elif cmd == "levels":
+        p = L.policy()["kinds"]
+        if not p:
+            print("Everything is shadow-only.")
+        for k, v in sorted(p.items()):
+            print(f"{k:<28} {v['level']:<8} streak {v.get('streak', 0)}")
+    elif cmd == "promote":
+        lvl = a[2] if len(a) > 2 else "one-tap"
+        if lvl == "auto" and not a[1].endswith("/internal"):
+            sys.exit("auto is only allowed for internal audiences")
+        L.set_level(a[1], lvl, "Andrew")
+        print(f"{a[1]} -> {lvl}")
+    elif cmd == "demote":
+        L.set_level(a[1], "shadow", "Andrew")
+        print(f"{a[1]} -> shadow")
+    elif cmd == "pause":
+        open(L.PAUSED, "w").write("paused\n")
+        print("paused")
+    elif cmd == "resume":
+        if os.path.exists(L.PAUSED):
+            os.remove(L.PAUSED)
+        print("resumed")
+    elif cmd == "sent":
+        n = int(a[2]) if len(a) > 2 else 20
+        lines = open(L.SENT_LOG).read().splitlines()[-n:] if os.path.exists(L.SENT_LOG) else []
+        for line in lines:
+            s = json.loads(line)
+            print(f"{L.pst(s['ts'])} {s['to']} ({s['kind']}{', edited' if s.get('edited') else ''}): {s['text'][:120]}")
+        if not lines:
+            print("Nothing sent yet.")
+    else:
+        sys.exit(__doc__)
+
+
+if __name__ == "__main__":
+    main()

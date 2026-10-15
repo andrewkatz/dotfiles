@@ -103,8 +103,9 @@ def gmail_thread(thread_decimal):
         frm = hdr(m, "From")
         msgs.append({"from": frm, "from_me": ME in frm.lower(), "ts_epoch": int(m.get("internalDate", 0)) / 1000,
                      "time_pst": time.strftime("%Y-%m-%d %H:%M", time.localtime(int(m.get("internalDate", 0)) / 1000)),
-                     "to": hdr(m, "To"), "subject": hdr(m, "Subject"), "text": strip_quote(body(m.get("payload")))[:CAP],
-                     "uid": m.get("id")})
+                     "to": hdr(m, "To"), "cc": hdr(m, "Cc"), "reply_to": hdr(m, "Reply-To"), "subject": hdr(m, "Subject"),
+                     "message_id": hdr(m, "Message-ID") or hdr(m, "Message-Id"), "references": hdr(m, "References"),
+                     "thread_hex": t.get("id"), "text": strip_quote(body(m.get("payload")))[:CAP], "uid": m.get("id")})
     return msgs, ""
 
 
@@ -142,6 +143,9 @@ def candidates(since):
             this = next((m for m in thread if m["uid"] == (d.get("raw") or {}).get("uid")), None)
             if this:
                 item["text"] = this["text"]
+                item["reply"] = {"thread_hex": this["thread_hex"], "message_id": this["message_id"],
+                                 "references": this["references"], "subject": this["subject"], "from": this["from"],
+                                 "reply_to": this["reply_to"], "to": this["to"], "cc": this["cc"]}
             item["thread"] = [m for m in thread if m["ts_epoch"] < d["ts_epoch"] - 1][-6:]
             addr = sender_addr(d.get("sender"))
             before = [m for m in mine if m["ts_epoch"] < d["ts_epoch"]]
@@ -150,6 +154,12 @@ def candidates(since):
             pool = to_them[-3:] or [m for m in before if m["source"] == "gmail"][-3:]
             item["examples"] = [x for x in (gmail_message((m.get("raw") or {}).get("uid", "")) for m in pool) if x]
         else:
+            r = d.get("raw") or {}
+            if d["source"] == "chat":
+                item["reply"] = {"space": r.get("space_id"), "thread": None if r.get("is_dm") else r.get("thread_id")}
+            else:
+                item["reply"] = {"channel": r.get("channel_id"),
+                                 "thread_ts": None if r.get("is_dm") and not r.get("thread_ts") else (r.get("thread_ts") or r.get("ts"))}
             thread = [x for x in allrecs if key(x) == k and x["ts_epoch"] < d["ts_epoch"]]
             item["thread"] = [{"from": x.get("sender"), "from_me": bool(x.get("from_me")), "time_pst": x.get("time_pst"),
                                "text": x.get("text", "")[:CAP]} for x in thread[-8:]]

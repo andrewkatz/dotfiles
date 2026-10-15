@@ -40,6 +40,14 @@ HERMES_SESSION_FILE=~/.local/share/conductor/desk-hermes-session ~/.claude/skill
 
 `~/.claude/skills/comms/bin/comms-shadow report` shows how well drafted replies match what he actually sent, by kind of message. Use it when he asks how the drafts are doing or what could be handed off. `comms-shadow show <id>` shows one in full. The worker drafts only; it can't send anything.
 
+### Replies to send (comms outbox)
+
+Drafts of kinds Andrew has promoted come to him as replies to send (`comms-outbox list`). He approves them on the dashboard (http://localhost:8710, "Replies to send") or here. There's no Telegram approval and no Slack sending for now.
+- At start, and when he asks "anything to send?", show each one in two lines: who and where, then the reply. Ask with AskUserQuestion: Send (Recommended) / Edit / Skip.
+- Then act: Send → `comms-outbox send <id>`. Edit → his text: `comms-outbox send <id> "<text>"`. Skip → `comms-outbox skip <id>`. Each send waits 5 min and can be stopped (`comms-outbox stop <id>`).
+- Levels: `comms-outbox levels`. When the scoreboard (`comms-shadow report`) marks a kind "candidate", offer to promote it: `comms-outbox promote <category>/<audience>`. Promoting is his call, never yours. `comms-outbox pause` stops everything at once.
+- `comms-outbox sent` lists what went out on his behalf.
+
 ### Creating developerly tasks
 
 New work goes one of two ways, depending on when he wants it:

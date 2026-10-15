@@ -13,6 +13,8 @@ Reads Hermes datasets on katz-mini read-only (bin/comms-remote.py over ssh). Dra
 import base64, collections, concurrent.futures as cf, datetime, fcntl, json, os, re, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, HERE)
+import comms_lib as L  # noqa: E402
 ROOT = os.path.dirname(HERE)
 STATE_DIR = os.path.expanduser("~/.local/share/comms")
 STATE = os.path.join(STATE_DIR, "shadow.json")
@@ -137,6 +139,18 @@ def run(hours):
                 log(f"draft failed {iid}: {err}")
     if cands:
         st["cursor"] = max(st["cursor"] or 0, max(c["ts_epoch"] for c in cands))
+    # offer fresh drafts of kinds Andrew has promoted (one-tap / auto); everything else stays shadow
+    for it in st["items"].values():
+        if it["status"] == "drafted" and not it.get("offer_checked") and time.time() - it["ts_epoch"] < 2 * 3600:
+            it["offer_checked"] = True
+            why_not = L.eligible(it)
+            if why_not:
+                it["not_offered"] = why_not
+                continue
+            e = L.propose(it)
+            if e:
+                it["outbox"] = e["id"]
+                log(f"offered {e['id']} ({e['kind']}, {e['level']}) to Andrew")
     save(st)
 
     # grade drafts that now have Andrew's real reply
@@ -144,7 +158,16 @@ def run(hours):
     if waiting:
         q = [{k: it[k] for k in ("id", "source", "key", "channel", "is_dm", "ts_epoch")} for it in waiting]
         found = remote("replies", base64.b64encode(json.dumps(q).encode()).decode())
+        ob = L.outbox()["items"]
         for it in waiting:
+            o = ob.get(it.get("outbox") or "")
+            if o and o["status"] == "sent":
+                it.update(status="graded", graded_at=time.time(), actual={"text": o["text"], "time_pst": L.pst(o.get("sent_at"))},
+                          grade={"verdict": "minor" if o.get("edited") else "same",
+                                 "diff": "sent via one-tap" + (" after an edit" if o.get("edited") else ""), "lesson": ""})
+                continue
+            if o and o["status"] in ("proposed", "holding"):
+                continue
             actual = found.get(it["id"])
             if actual:
                 it["actual"] = actual

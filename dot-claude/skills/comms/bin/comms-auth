@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""Set up send access for the comms worker. Each step needs Andrew once.
+
+  comms-auth google              browser consent for gmail.send + chat.messages.create (send-only, no reading)
+  comms-auth slack xoxp-...      store a Slack user token that has chat:write
+  comms-auth telegram BOT_TOKEN  store the comms approval bot's token, then message the bot "/start"
+  comms-auth status              what's set up
+
+Credentials go to ~/.config/comms (chmod 600). The Google OAuth client is the existing one in the
+hermes-chat-agent-1 project (read from katz-mini); the token is separate from Hermes's read-only token.
+"""
+import http.server, json, os, secrets, subprocess, sys, time, urllib.parse, urllib.request, webbrowser
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import comms_lib as L  # noqa: E402
+
+SCOPES = ["https://www.googleapis.com/auth/gmail.send", "https://www.googleapis.com/auth/chat.messages.create"]
+
+
+def google():
+    raw = subprocess.run(["ssh", "katz-mini", "python3", "-"], capture_output=True, text=True, check=True,
+                         input="import json,os; d=json.load(open(os.path.expanduser('~/.hermes/google-chat-user-oauth.json'))); "
+                               "print(json.dumps({'client_id': d['client_id'], 'client_secret': d['client_secret']}))").stdout
+    client = json.loads(raw)
+    state = secrets.token_urlsafe(16)
+    got = {}
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            got.update({k: v[0] for k, v in q.items()})
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"Done. You can close this tab.")
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    redirect = f"http://127.0.0.1:{srv.server_port}/"
+    url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode({
+        "client_id": client["client_id"], "redirect_uri": redirect, "response_type": "code", "scope": " ".join(SCOPES),
+        "access_type": "offline", "prompt": "consent", "state": state, "login_hint": L.ME})
+    print("Opening the browser for consent (sign in as andrew@giantpartners.com). If it doesn't open:\n" + url)
+    webbrowser.open(url)
+    while "code" not in got and "error" not in got:
+        srv.handle_request()
+    if got.get("state") != state or "code" not in got:
+        sys.exit("consent failed: " + json.dumps(got))
+    body = urllib.parse.urlencode({"code": got["code"], "client_id": client["client_id"], "client_secret": client["client_secret"],
+                                   "redirect_uri": redirect, "grant_type": "authorization_code"}).encode()
+    t = json.loads(urllib.request.urlopen(urllib.request.Request("https://oauth2.googleapis.com/token", data=body), timeout=30).read())
+    if not t.get("refresh_token"):
+        sys.exit("no refresh token returned")
+    L.save_conf("google-send.json", {**client, "refresh_token": t["refresh_token"], "access_token": t["access_token"],
+                                     "expires_at": time.time() + int(t.get("expires_in", 3600)), "scopes": t.get("scope", "").split()})
+    print("Google send access saved:", t.get("scope"))
+
+
+def slack(token):
+    r = L._http("https://slack.com/api/auth.test", {}, {"Authorization": "Bearer " + token})
+    if not r.get("ok"):
+        sys.exit("token rejected: " + str(r.get("error")))
+    L.save_conf("slack-send.json", {"token": token, "user": r.get("user"), "team": r.get("team")})
+    print(f"Slack send access saved for {r.get('user')} in {r.get('team')}. (It must have the chat:write user scope.)")
+
+
+def telegram(token):
+    me = L._http(f"https://api.telegram.org/bot{token}/getMe")
+    print(f"Bot @{me['result']['username']}: send it /start from your phone now. Waiting up to 2 minutes...")
+    allowed = subprocess.run(["ssh", "katz-mini", "grep ^TELEGRAM_ALLOWED_USERS= ~/.hermes/.env | cut -d= -f2"],
+                             capture_output=True, text=True).stdout.strip().split(",")
+    deadline = time.time() + 120
+    while time.time() < deadline:
+        res = L._http(f"https://api.telegram.org/bot{token}/getUpdates", {"timeout": 20})
+        for u in res.get("result", []):
+            m = u.get("message") or {}
+            if str(m.get("from", {}).get("id")) in allowed:
+                L.save_conf("telegram.json", {"token": token, "chat_id": m["chat"]["id"], "bot": me["result"]["username"]})
+                L._http(f"https://api.telegram.org/bot{token}/getUpdates", {"offset": u["update_id"] + 1})
+                L._http(f"https://api.telegram.org/bot{token}/sendMessage",
+                        {"chat_id": m["chat"]["id"], "text": "Connected. Replies to approve will show up here."})
+                print("Telegram approval bot connected.")
+                return
+    sys.exit("no /start from Andrew's Telegram account within 2 minutes")
+
+
+def status():
+    g = L.conf("google-send.json")
+    print("Google (Gmail + Chat send):", "yes " + " ".join(s.split("/")[-1] for s in g.get("scopes", [])) if g else "no")
+    s = L.conf("slack-send.json")
+    print("Slack send:", f"yes ({s.get('user')} @ {s.get('team')})" if s else "no")
+    t = L.conf("telegram.json")
+    print("Telegram approval bot:", f"yes (@{t.get('bot')})" if t and t.get("chat_id") else "no")
+    print("Paused:", "yes" if os.path.exists(L.PAUSED) else "no")
+
+
+if __name__ == "__main__":
+    a = sys.argv[1:]
+    {"google": lambda: google(), "slack": lambda: slack(a[1]), "telegram": lambda: telegram(a[1]),
+     "status": status}.get(a[0] if a else "", lambda: sys.exit(__doc__))()

@@ -16,6 +16,7 @@ STATE = os.path.expanduser("~/.local/share/conductor")
 PORT = int(os.environ.get("CONDUCTOR_WEB_PORT", "8710"))
 from importlib.machinery import SourceFileLoader
 FU = SourceFileLoader("cfu", os.path.join(HERE, "conductor-followup")).load_module()
+COMMS = os.path.expanduser("~/.claude/skills/comms/bin/")
 HOSTS = {f"localhost:{PORT}", f"127.0.0.1:{PORT}"}
 
 
@@ -75,6 +76,10 @@ class H(BaseHTTPRequestHandler):
                 self.send(200, open(PAGE, "rb").read(), "text/html; charset=utf-8")
             elif self.path == "/api/state":
                 self.send(200, state())
+            elif self.path == "/api/outbox":
+                self.send(200, {"items": json.loads(subprocess.run([COMMS + "comms-outbox", "list", "--json"], capture_output=True,
+                                                                   text=True, timeout=30).stdout or "[]"),
+                                "paused": os.path.exists(os.path.expanduser("~/.local/share/comms/PAUSED"))})
             elif self.path == "/api/shadow":
                 r = subprocess.run([os.path.expanduser("~/.claude/skills/comms/bin/comms-shadow"), "report", "--json"],
                                    capture_output=True, text=True, timeout=30)
@@ -92,6 +97,13 @@ class H(BaseHTTPRequestHandler):
             if self.path == "/api/followup/done":
                 fid = str(body["id"]).upper()
                 self.send(200, {"ok": True, "out": run("conductor-followup", "done", fid).strip()})
+            elif self.path == "/api/outbox":
+                action, oid = body.get("action"), str(body.get("id", ""))
+                if action not in ("send", "skip", "stop") or not oid.startswith("O"):
+                    return self.send(400, {"error": "bad action"})
+                args = [COMMS + "comms-outbox", action, oid] + ([body["text"]] if action == "send" and body.get("text") else [])
+                r = subprocess.run(args, capture_output=True, text=True, timeout=30)
+                self.send(200 if r.returncode == 0 else 500, {"out": r.stdout.strip(), "error": r.stderr.strip()[-300:]})
             elif self.path == "/api/say":
                 text = str(body["text"]).strip()
                 if not text:

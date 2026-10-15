@@ -73,6 +73,11 @@ details > summary { cursor: pointer; list-style: none; } details > summary::-web
   <h2 id="needs-h">Waiting on you</h2>
   <div id="needs"></div>
 
+  <div id="outbox-wrap" hidden>
+  <h2 id="outbox-h">Replies to send</h2>
+  <div id="outbox"></div>
+  </div>
+
   <h2>In flight</h2>
   <div id="tasks"></div>
 
@@ -116,7 +121,8 @@ function render(d) {
   const qs = [...(d.questions || [])].sort((a, b) => (b.blocking ? 1 : 0) - (a.blocking ? 1 : 0))
   const blocking = qs.filter((q) => q.blocking).length
   const count = fus.length + qs.length
-  document.title = (blocking + fus.length ? `(${blocking + fus.length}) ` : '') + 'Conductor'
+  const waiting = blocking + fus.length + outboxIds.size
+  document.title = (waiting ? `(${waiting}) ` : '') + 'Conductor'
   $('status').textContent = d.conductor
   $('status').className = 'pill' + (d.conductor === 'busy' || d.conductor === 'idle' || d.conductor === 'running' ? ' on' : '')
   $('meta').textContent = `${d.working} working (${d.limit})${d.rush ? ` + ${d.rush} rush` : ''} · updated ${clock(d.now)} PST`
@@ -166,8 +172,9 @@ function render(d) {
   alertNew(d)
 }
 
+let outboxIds = new Set()
 function alertNew(d) {
-  const ids = new Set([...(d.followups || []).map((f) => f.id), ...(d.questions || []).filter((q) => q.blocking).map((q) => q.id)])
+  const ids = new Set([...outboxIds, ...(d.followups || []).map((f) => f.id), ...(d.questions || []).filter((q) => q.blocking).map((q) => q.id)])
   if (seen && 'Notification' in window && Notification.permission === 'granted') {
     const fresh = [...ids].filter((i) => !seen.has(i))
     if (fresh.length) new Notification('Conductor needs you', { body: fresh.join(', ') + ' · open the Conductor tab' })
@@ -193,7 +200,8 @@ document.addEventListener('click', async (e) => {
   const b = e.target.closest('button')
   if (!b || b.form) return
   try {
-    if (b.dataset.done) { b.disabled = true; await post('/api/followup/done', { id: b.dataset.done }); await load() }
+    if (b.dataset.ob) { b.disabled = true; await post('/api/outbox', { action: b.dataset.ob, id: b.dataset.id }); await loadOutbox() }
+    else if (b.dataset.done) { b.disabled = true; await post('/api/followup/done', { id: b.dataset.done }); await load() }
     else if (b.dataset.say) { b.disabled = true; await post('/api/say', { text: b.dataset.say, ref: b.dataset.ref }); await load() }
     else if (b.dataset.copy) {
       const f = last.followups.find((x) => x.id === b.dataset.copy)
@@ -206,6 +214,11 @@ document.addEventListener('submit', async (e) => {
   e.preventDefault()
   const form = e.target, input = form.querySelector('input'), text = input.value.trim()
   if (!text) return
+  if (form.dataset.outbox) {
+    try { await post('/api/outbox', { action: 'send', id: form.dataset.outbox, text }); await loadOutbox() }
+    catch (err) { $('error').textContent = err.message }
+    return
+  }
   const ref = form.dataset.ref || null
   const full = form.id === 'say' ? text : (form.dataset.prefix || (ref ? ref + ': ' : '')) + text
   try { await post('/api/say', { text: full, ref }); input.value = ''; input.blur(); await load() }
@@ -215,6 +228,26 @@ document.addEventListener('submit', async (e) => {
 if ('Notification' in window && Notification.permission === 'default') {
   $('notify').hidden = false
   $('notify').onclick = () => Notification.requestPermission().then(() => { $('notify').hidden = true })
+}
+async function loadOutbox() {
+  try {
+    const d = await (await fetch('/api/outbox', { cache: 'no-store' })).json()
+    const items = d.items || []
+    outboxIds = new Set(items.filter((e) => e.status === 'proposed').map((e) => e.id))
+    alertNew(last || {})
+    $('outbox-wrap').hidden = !items.length && !d.paused
+    $('outbox-h').textContent = `Replies to send (${items.length})${d.paused ? ' · PAUSED' : ''}`
+    $('outbox').innerHTML = items.map((e) => `<div class="card ${e.status === 'proposed' ? 'urgent' : ''}"><div class="row"><span class="id">${esc(e.id)}</span><div class="grow">
+      <div><b>${esc(e.sender || '')}</b> <span class="small">· ${esc(e.source)} · ${esc(e.context || '')} · ${esc(e.kind)}</span></div>
+      <div class="small" style="margin-top:4px">They wrote: ${link((e.incoming || '').slice(0, 400))}</div>
+      ${e.status === 'proposed'
+        ? `<form data-outbox="${esc(e.id)}"><input type="text" value="${esc(e.text)}"><button class="primary">Send</button></form>
+           <div class="btns"><button data-ob="skip" data-id="${esc(e.id)}">Skip</button></div>`
+        : e.status === 'holding'
+          ? `<div class="draft">${esc(e.text)}</div><div class="btns"><span class="small">Sends at ${clock(new Date(e.send_at * 1000).toISOString())}</span><button data-ob="stop" data-id="${esc(e.id)}">Stop</button></div>`
+          : `<div class="draft">${esc(e.text)}</div><div class="small err">${esc(e.status)}: ${esc(e.error || '')}</div>`}
+      </div></div></div>`).join('')
+  } catch (e) { /* next poll */ }
 }
 async function loadShadow() {
   try {
@@ -242,9 +275,11 @@ async function loadShadow() {
   } catch (e) { $('shadow').innerHTML = '<div class="empty">Shadow drafts unavailable.</div>' }
 }
 load()
+loadOutbox()
 loadShadow()
 setInterval(load, 15000)
 setInterval(loadShadow, 60000)
+setInterval(loadOutbox, 10000)
 </script>
 </body>
 </html>
