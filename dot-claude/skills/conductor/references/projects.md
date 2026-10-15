@@ -17,6 +17,7 @@ Every developerly project is fully managed (Andrew, 2026-10-14). A project with 
 
 ## VIA (`~/Work/platform`, GitHub `giant-partners/platform`)
 
+- **Counts are exact, never estimated.** See `policy.md` "Product rules". Every spec, review and merge gate checks for it.
 - **Base branch is decided by git ancestry, not by the task text.** Run `bin/conductor-base-check <worktree> HEAD` and record `based_on` in the ledger (`base`):
   - `based_on=beta` (the branch contains beta-only commits) → it ships to **beta**. Always. No exceptions, whatever the description says. If the task really needs to reach production now, that's a question for Andrew, and the answer is a new branch from `origin/main` with only the branch's own commits cherry-picked - never retargeting.
   - `based_on=main` → ships to **main** only when the task is explicitly a production hotfix; otherwise **beta** (a main-based branch is safe on beta).

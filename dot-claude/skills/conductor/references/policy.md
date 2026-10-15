@@ -36,6 +36,10 @@ What the conductor is allowed to do and how it decides. Every job reads this (th
 - No session for an in_progress task: relaunch it yourself, don't ask. If the worktree is gone, use `developerly work-items launch local:<local_id> --agent=claude --prompt=...`. If it exists, write the original launch prompt to a scratch file and run `~/.claude/skills/conductor/bin/conductor-relaunch <local_id> <prompt-file>`. It restarts the worker in the existing worktree and tmux session the way developerly does (`work-items launch` refuses in-progress tasks) and adds "Resume: check git log/status". Never start `claude` in tmux by hand. Log it. Ask only if the worktree has uncommitted changes that a relaunch could overwrite.
 - Worker protocol (paste into every launch prompt and send to existing workers when you adopt them): `references/worker-protocol.md`.
 
+## Product rules (gates enforce these)
+
+- **VIA counts are always exact, never estimated** (Andrew, 2026-10-15: "We should never, ever, ever be doing estimates. Should always be doing actual, accurate counts."; D158). Any count a user sees must come from an exact query. Reject at spec (don't write acceptance criteria that allow an estimate), review (blocking finding) and merge (not safe): `APPROX_*` functions (`APPROX_COUNT_DISTINCT`, HyperLogLog), `SAMPLE`/`TABLESAMPLE`, extrapolating from a percentage or a subset, and "~N", "about", "estimated" or "approx" labels on counts. Making a slow count fast is fine only if it stays exact (caching an exact result, a precomputed exact table, better SQL). If an exact count can't be made fast enough, show a loading state, never an estimate.
+
 ## Safe to merge
 
 All gates green and migrations handled per "Migrations" below. **Merge it yourself.** Andrew's standing instruction (2026-10-14) is to keep things moving and not wait on him unless a decision absolutely needs him. Riskier changes get **more scrutiny, not a question**.
