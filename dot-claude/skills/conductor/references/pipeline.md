@@ -19,6 +19,8 @@ Skip stages that genuinely don't apply and record why (e.g. no UI change → `qa
 
 ## spec
 
+**Todo tasks have no ledger entry yet.** That's normal: the ledger only holds tasks the conductor has started, and finished ones move to `done`. The spec gate creates `tasks.<id>` from `conductor-sync --todo --json` (title, project, base, `stage: "spec"`, `since`). It never refuses because the entry is missing. It refuses only when the task isn't in `conductor-sync --todo` as `todo`, or `done.<id>` says it's finished or dropped.
+
 Read the task description. It's spec-ready when it states the goal, observable acceptance criteria, and, for VIA, the task has a `base_branch` label (labeling rule in `projects.md`; other projects use the profile's base). **Unlabeled:** apply the labeling rule. When it's unclear, label it `beta`, because beta is always safe and only defers the production release. Log a `D<n>` and launch.
 
 **Missing acceptance criteria:** write them yourself from the description, the linked board item, the code and comparable features. Store them in the ledger (`acceptance: [...]`), log a `D<n>`, and launch.
