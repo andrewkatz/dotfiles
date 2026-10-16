@@ -82,7 +82,7 @@ Andrew reads questions in one place, not in your running output. Never ask a que
 
 **Test before queuing any question:** if you'd recommend one option and expect him to pick it, it's a decision, not a question. 12 of his 14 answers on 2026-10-14 were the recommendation (merge it, complete it, narrow scope, keep fixing), and every one of those should have been a `D<n>`. Never ask for something you already have authority to do (completing after live passes, merging, review scope: see `pipeline.md` "Converge").
 
-**Decisions:** record each one in `ledger.decisions` (`{id: "D<n>", task, decision, why, ts}`) and keep going. Make the reversible choice when there is one. He overrides by replying `D4: <change>`, and the daily summary lists the day's decisions.
+**Decisions:** record each one with `conductor-ledger append decisions '{"id":"D<n>","task":<id>,"decision":...,"why":...,"ts":...}'` (D<n> from `next-id D`; decisions is a list: never `set` or `merge` it) and keep going. Make the reversible choice when there is one. He overrides by replying `D4: <change>`, and the daily summary lists the day's decisions.
 
 **When a question is truly needed, it never stalls the pipeline:**
 - Default to `blocking: false`.

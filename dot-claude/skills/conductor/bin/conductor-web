@@ -33,7 +33,10 @@ def state():
         led = json.load(open(os.path.join(STATE, "ledger.json")))
     except (OSError, json.JSONDecodeError):
         led = {}
-    data["decisions"] = list(reversed(led.get("decisions", [])[-15:]))
+    ds = led.get("decisions") or []
+    if isinstance(ds, dict):  # tolerate a mis-written map {"D1": "text" | {...}}
+        ds = [v if isinstance(v, dict) else {"id": k, "decision": v} for k, v in ds.items()]
+    data["decisions"] = list(reversed(ds[-15:]))
     open_q = {q["id"] for q in data["questions"]}
     sent = led.get("web_sent") or {}
     data["sent"] = [s for s in sent.values() if s.get("ref") in open_q or s.get("ref") is None

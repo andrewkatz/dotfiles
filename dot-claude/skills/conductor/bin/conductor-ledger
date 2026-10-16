@@ -11,7 +11,8 @@
   conductor-ledger log TASK ACTION [DETAIL]   append one line to ledger.log
   conductor-ledger summary               compact view: active tasks, open questions, jobs, overrides
 
-PATH is dot-separated: tasks.2110.stage, questions, overrides.pins, hermes.items.
+PATH is dot-separated: tasks.2110.stage, questions, questions.3.status (list index), overrides.pins, hermes.items.
+A write can't change a list/dict into another type, and list entries are only addressed by index.
 Top-level keys live in separate files so routine reads stay small:
   hermes -> hermes.json (board verdict cache), done -> done.json, archive -> archive.json
   (answered questions, old decisions), everything else -> ledger.json.
@@ -52,6 +53,11 @@ def write(f, data):
 
 def walk(data, keys, create=False):
     for k in keys:
+        if isinstance(data, list):  # list entries by index: questions.3.status
+            data = data[int(k)] if k.lstrip("-").isdigit() and -len(data) <= int(k) < len(data) else None
+            if data is None:
+                raise KeyError(".".join(keys))
+            continue
         if k not in data:
             if not create:
                 raise KeyError(".".join(keys))
@@ -131,8 +137,27 @@ def main():
             print(json.dumps(walk(doc, keys), indent=1))
             return
         parent = walk(doc, keys[:-1], create=True)
+        if isinstance(parent, list) and not keys[-1].lstrip("-").isdigit():
+            sys.exit(f"refused: {'.'.join(keys[:-1])} is a list; add with `append {'.'.join(keys[:-1])} JSON` (index entries by number)")
         if cmd == "set":
-            parent[keys[-1]] = json.loads(a[2])
+            new = json.loads(a[2])
+            cur = parent[int(keys[-1])] if isinstance(parent, list) else parent.get(keys[-1])
+            if isinstance(cur, (list, dict)) and type(new) is not type(cur):
+                sys.exit(f"refused: {path} is a {type(cur).__name__}; setting a {type(new).__name__} would replace it all")
+            if isinstance(parent, list):
+                parent[int(keys[-1])] = new
+            else:
+                parent[keys[-1]] = new
+        elif isinstance(parent, list):
+            i = int(keys[-1])
+            if cmd == "merge":
+                parent[i].update(json.loads(a[2]))
+            elif cmd == "append":
+                parent[i].append(json.loads(a[2]))
+            elif cmd == "del":
+                parent.pop(i)
+            else:
+                sys.exit(f"unknown command {cmd}")
         elif cmd == "merge":
             parent.setdefault(keys[-1], {}).update(json.loads(a[2]))
         elif cmd == "append":
