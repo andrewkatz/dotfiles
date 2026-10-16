@@ -72,7 +72,8 @@ def main():
     except FileNotFoundError:
         pass
     live = {str(s["local_id"]): s for s in sync()}
-    todo = [t for t in sync("--todo") if t.get("status") == "todo" and t.get("project") not in PAUSED_PROJECTS]
+    todo_all = {str(t["local_id"]): t for t in sync("--todo") if t.get("status") in ("todo", "in_progress")}
+    todo = [t for t in todo_all.values() if t.get("status") == "todo" and t.get("project") not in PAUSED_PROJECTS]
     jobs = {k: v for k, v in (led.get("jobs") or {}).items() if v}
     running = {str(v.get("task")) for v in jobs.values() if not v.get("ended") and "done" not in str(v.get("status", ""))}
     followups = led.get("andrew_followups") or {}
@@ -112,8 +113,14 @@ def main():
                 out.append(f"{name}: {stage} with no resume_when and no open question -> give it a way back or move it")
         if stage == "findings" and any(str(f.get("task")) == tid for f in followups.values()) and tid not in running:
             out.append(f"{name}: findings delivered -> complete the investigation (or launch its fix)")
-        if stage in ("done", "dropped") and s and s.get("status") == "in_progress":
-            out.append(f"{name}: ledger says {stage}, developerly still in progress -> complete it in developerly")
+        if stage in ("done", "dropped"):
+            dev = s or todo_all.get(tid)
+            if dev:
+                ref = f"wi:{dev['work_item_id']}" if dev.get("work_item_id") else f"local:{tid}"
+                out.append(f"{name}: ledger says {stage}, developerly still {dev.get('status')} -> "
+                           f"developerly work-items complete {ref} --confirm={ref}, then move it to done")
+            else:
+                out.append(f"{name}: {stage} and gone from developerly -> move tasks.{tid} to done.{tid} (off the dashboard)")
         if stage == "parked" and s and s.get("session_status") == "busy":
             out.append(f"{name}: parked but its worker is busy -> update the stage")
 
