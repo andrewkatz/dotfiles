@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""New work needs Andrew's OK before it becomes a task (Andrew, 2026-10-16: "Anytime there's new work to be done,
+I want to know what it is, how we're going to do it, and why we need to do it").
+
+  conductor-propose add --project VIA --title "..." --what "..." --how "..." --why "..." \
+      [--kind feature|bug_fix] [--base beta|main] [--type fix|investigation] [--from TASK] [--now] [--sync] \
+      [--details FILE]
+      Queues a question (non-blocking) carrying the proposal and prints its id (Q<n>). --now = Andrew asked for it
+      to start right away (a rush), so the recommended answer is "Approve, start now". --details: acceptance
+      criteria / extra spec appended to the task description. Return `ask: Q<n>` so it reaches him.
+      --asked "<Andrew's words>": only with --type investigation. He asked for this investigation himself, so his
+      request is the approval: it's recorded approved ("start now") and `create` works right away. Never for code work.
+  conductor-propose create Q<n>
+      Only after Andrew approved it (status answered, answer starts with "Approve"/"yes"): creates the developerly
+      task from the proposal and prints `<local_id> <now|queue>`. Apply any changes he asked for to
+      questions.<i>.proposal first.
+  conductor-propose list    open proposals
+"""
+import argparse, json, os, re, subprocess, sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+LEDGER = os.path.join(HERE, "conductor-ledger")
+APPROVE, START_NOW, NO = "Approve", "Approve, start now", "No"
+
+
+def ledger(*a):
+    r = subprocess.run([LEDGER, *a], capture_output=True, text=True)
+    if r.returncode:
+        sys.exit(r.stderr.strip() or r.stdout.strip())
+    return r.stdout.strip()
+
+
+def questions():
+    return json.loads(ledger("get", "questions") or "[]")
+
+
+def add(o):
+    details = open(o.details).read().strip() if o.details else ""
+    qid = ledger("next-id", "Q")
+    p = {k: getattr(o, k) for k in ("project", "title", "what", "how", "why", "kind", "base", "type", "sync")}
+    p.update({"from_task": o.from_task, "start": "now" if o.now else "queue", "details": details})
+    import datetime
+    q = {"id": qid, "kind": "proposal", "task": o.from_task,
+         "question": f"New task ({o.project}): {o.title}. What: {o.what} How: {o.how} Why: {o.why} Create it?",
+         "options": [START_NOW, APPROVE, NO] if o.now else [APPROVE, START_NOW, NO],
+         "recommendation": START_NOW if o.now else APPROVE, "blocking": False,
+         "meanwhile": "nothing is created until you approve",
+         "asked_at": None, "status": "open", "proposal": p,
+         **({"status": "answered", "answer": f"Approve, start now (Andrew asked: {o.asked})"} if o.asked else {}),
+         "created_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds")}
+    ledger("append", "questions", json.dumps(q))
+    ledger("log", str(o.from_task or "-"), "proposed", f"{qid}: {o.title}")
+    print(qid)
+
+
+def create(qid):
+    qs = questions()
+    i, q = next(((i, q) for i, q in enumerate(qs) if q.get("id") == qid), (None, None))
+    if not q or not q.get("proposal"):
+        sys.exit(f"{qid} isn't a proposal")
+    p = q["proposal"]
+    if p.get("created"):
+        sys.exit(f"{qid} already created task {p['created']}")
+    ans = str(q.get("answer") or "")
+    if q.get("status") != "answered" or not re.match(r"\s*(approve|yes|ok|go)\b", ans, re.I):
+        sys.exit(f"refused: {qid} isn't approved by Andrew (status {q.get('status')}, answer {ans!r})")
+    now = bool(re.search(r"\b(start now|now|rush)\b", ans, re.I))
+    desc = "\n\n".join(x for x in (f"Goal: {p['what']}", f"Approach: {p['how']}", f"Why: {p['why']}", p.get("details"),
+                                    f"Approved by Andrew ({qid}): {ans}") if x)
+    cmd = ["developerly", "work-items", "create", f"--project={p['project']}", f"--kind={p.get('kind') or 'feature'}",
+           f"--title={p['title']}", f"--description={desc}", "--json"]
+    if p.get("base"):
+        cmd.append(f"--base={p['base']}")
+    if p.get("sync"):
+        cmd.append("--sync")
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    if r.returncode:
+        sys.exit(f"developerly create failed: {r.stderr.strip() or r.stdout.strip()}")
+    out = json.loads(r.stdout)
+    local = out.get("local_id") or (out.get("work_item") or {}).get("local_id") or out.get("id")
+    ledger("merge", f"questions.{i}.proposal", json.dumps({"created": local, "start": "now" if now else "queue"}))
+    ledger("log", str(local), "created", f"from approved proposal {qid}: {p['title']}")
+    print(local, "now" if now else "queue")
+
+
+def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "create":
+        return create(sys.argv[2])
+    if len(sys.argv) > 1 and sys.argv[1] == "list":
+        for q in questions():
+            if q.get("proposal") and q.get("status") == "open":
+                print(q["id"], q["proposal"]["project"], "-", q["proposal"]["title"])
+        return
+    ap = argparse.ArgumentParser(usage=__doc__)
+    ap.add_argument("cmd", choices=["add"])
+    for k in ("project", "title", "what", "how", "why"):
+        ap.add_argument(f"--{k}", required=True)
+    ap.add_argument("--kind", default="feature", choices=["feature", "bug_fix"])
+    ap.add_argument("--base")
+    ap.add_argument("--type", default="fix", choices=["fix", "investigation"])
+    ap.add_argument("--from", dest="from_task")
+    ap.add_argument("--now", action="store_true")
+    ap.add_argument("--sync", action="store_true")
+    ap.add_argument("--details")
+    ap.add_argument("--asked")
+    o = ap.parse_args()
+    if o.asked and o.type != "investigation":
+        sys.exit("refused: --asked is only for investigations Andrew asked for; code work needs his approval")
+    add(o)
+
+
+if __name__ == "__main__":
+    main()

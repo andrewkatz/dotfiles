@@ -10,7 +10,7 @@ conductor_id() {
 id=$(conductor_id)
 if [ -z "$id" ]; then
   cd "$HOME/Work"
-  claude --bg --name conductor --model sonnet --effort low --permission-mode bypassPermissions "/loop /conductor"
+  claude --bg --name conductor --model sonnet --effort low --permission-mode bypassPermissions --settings "$HOME/.claude/skills/conductor/settings.json" "/loop /conductor"
   id=$(conductor_id)
 fi
 while :; do

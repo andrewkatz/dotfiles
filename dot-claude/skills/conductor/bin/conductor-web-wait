@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Monitor command for the dispatcher: block until Andrew sends something from the web dashboard
 # (ledger.web_queue), print ONE line with all of it, and exit. Prints "still waiting" after 25 min (re-arm).
-# Every 5 min it also runs conductor-audit --new; new problems print as one `audit: ... ⏎ ...` line.
+# Every 5 min during working hours it also runs conductor-audit --new; new problems print as one `audit: ... ⏎ ...` line.
 #   web: Q50: Done - merge when gates pass ⏎ Q54: Close 2134 as cannot-reproduce
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 Q="$HOME/.local/share/conductor/ledger.json"
 for i in $(seq 750); do
-  if (( i % 150 == 0 )); then
+  if (( i % 150 == 0 )) && "$HERE/conductor-hours" >/dev/null 2>&1; then  # no audits outside working hours
     found=$("$HERE/conductor-audit" --new 2>/dev/null | paste -sd'\n' - | sed 's/$/ ⏎ /' | tr -d '\n' | sed 's/ ⏎ $//')
     [[ -n $found ]] && { echo "audit: $found"; exit 0; }
   fi

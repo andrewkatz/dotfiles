@@ -45,11 +45,11 @@ Spawn a background subagent (`model: opus`) in the worktree: run the `code-revie
 
 **Converge, don't churn** (2107 went 8 rounds and starved every other task):
 - **Round 1** is the full `<base>...HEAD` review.
-- **Rounds 2+** review only the fix commits since the last reviewed head. They check that those fixes are correct and introduce no regressions. A finding in code the fixes didn't touch is not a blocker: send it as a follow-up note, or create a follow-up task for anything real.
-- **Blocking findings** are only bugs that break the task's acceptance criteria or regress behavior compared with the base. Pre-existing issues, edge cases outside the goal, and design opinions go into a follow-up task (`developerly work-items create`, same project, linked in the ledger) and do not hold the merge.
+- **Rounds 2+** review only the fix commits since the last reviewed head. They check that those fixes are correct and introduce no regressions. A finding in code the fixes didn't touch is not a blocker: send it as a follow-up note, or propose a follow-up task for anything real (`conductor-propose add --from <task>`).
+- **Blocking findings** are only bugs that break the task's acceptance criteria or regress behavior compared with the base. Pre-existing issues, edge cases outside the goal, and design opinions go into a proposed follow-up task (`conductor-propose add --from <task>`, same project) and do not hold the merge.
 - **After round 3**, if blockers are still open, decide it yourself and log a `D<n>`. Andrew picked the narrowing option every time on 2107.
-  - If the remaining blockers are edge cases or outside the goal: ship now and create a follow-up task for them.
-  - If they break the task's core goal: narrow scope to the part that's solid, ship that, and move the rest to a follow-up task.
+  - If the remaining blockers are edge cases or outside the goal: ship now and propose a follow-up task for them.
+  - If they break the task's core goal: narrow scope to the part that's solid, ship that, and propose the rest as a follow-up task.
   - Never run more than 5 rounds. Ask only if even the narrowed scope can't pass.
 - Record `review_rounds` in the ledger.
 
@@ -95,22 +95,22 @@ The session appears in `conductor-sync` once Claude starts; record its name in t
 
 ## Rush tasks
 
-Andrew asks for something to start now (`rush` job, see `jobs.md`). The job does everything below in one go and returns within a couple of minutes:
+Andrew asks for new work (`rush` job, see `jobs.md`). The job returns within a couple of minutes:
 
 0. **Duplicate check.** Search `conductor-sync --todo --json` and the ledger for a task that already covers this (same record, error, or feature). If one exists, expedite that task instead (launch it now if it's todo; relay his words to its worker if it's in flight) and say so in `print:`.
 1. **Shape it.** From his words, pick the project (Giant Partners/VIA → `VIA` unless it clearly names another profiled project; Comfortly → `Inn Management`, which a rush overrides the pause for). Choose the type:
    - **investigation:** "why/what's happening/look into/is X broken", a report from a client, an alert. The deliverable is findings, not code.
    - **fix/feature:** he says what to change.
-   Write the title (`Investigate: ...` for investigations), the goal, and the acceptance criteria yourself. Investigation criteria are always: root cause (or the best-supported hypothesis, with confidence), the evidence (record ids, log lines, code paths), the impact (who and since when), and a recommended fix with its size. Paste his request verbatim at the end of the description. Never ask a spec question for a rush; decide and log a `D<n>`.
+   Write the title (`Investigate: ...` for investigations), the goal, and the acceptance criteria yourself. Investigation criteria are always: root cause (or the best-supported hypothesis, with confidence), the evidence (record ids, log lines, code paths), the impact (who and since when), and a recommended fix with its size. Paste his request verbatim in `--details`.
 2. **Base.** VIA investigations of production behavior (app.via.tools, a client report, a prod alert) use `main`, so the worker reads the code production runs. Everything else follows the normal labeling rule; when unclear, use `beta`.
-3. **Create:** `developerly work-items create --project=<P> --kind=bug_fix|feature --title=... --description="$(cat file)" --base=<base> --sync --json` (drop `--sync` for projects that aren't linked). Note the local id.
-4. **Ledger:** `tasks.<id>` = `{stage: "implementing", expedite: true, type: "investigation"|"fix", base, title, requested: "<his words>", acceptance: [...], since}`. Log it.
-5. **Launch** right away, per "Launching" (cd into the repo), with this added to the prompt above the worker protocol for investigations: "This is an investigation. Report findings before changing code: message conductor `task <id> findings:` then root cause, evidence, impact and recommended fix (≤8 lines). Production access is read-only: summaries only, no writes, no backfills, no deploys. Don't open a PR unless the conductor tells you to fix it." Use `--model opus` for investigations.
-6. Return `print: rush <id> started: <title> (<project>, base <base>)`.
+3. **Fix/feature → propose, don't create.** `conductor-propose add --now --project <P> --kind bug_fix|feature --base <base> --title ... --what ... --how ... --why ... --details <acceptance + his words> [--sync]` (`--sync` for linked projects). Return `ask: Q<n>` and `print: proposed <title> - waiting for your OK`. When he approves, the `answers` job creates it and continues from step 5.
+4. **Investigation → create now.** `conductor-propose add --type investigation --asked "<his words>" ...` (same fields), then `conductor-propose create Q<n>` → its local id.
+5. **Ledger:** `tasks.<id>` = `{stage: "implementing", expedite: true, type: "investigation"|"fix", base, title, requested: "<his words>", acceptance: [...], proposal: "Q<n>", since}`. Log it.
+6. **Launch** right away during working hours (outside them it waits for the first tick), per "Launching" (cd into the repo), with this added to the prompt above the worker protocol for investigations: "This is an investigation. Report findings before changing code: message conductor `task <id> findings:` then root cause, evidence, impact and recommended fix (≤8 lines). Production access is read-only: summaries only, no writes, no backfills, no deploys. Don't open a PR unless the conductor tells you to fix it." Use `--model opus` for investigations.
+7. Return `print: rush <id> started: <title> (<project>, base <base>)`.
 
-**Findings** (`task <id> findings:` from the worker) go to Andrew at once: the `gate <id> findings` job sends them as a follow-up always, even when there's nothing for him to do (`policy.md` "Investigation results"; required, not optional) (`conductor-followup add --what "Findings for <title>: <root cause>" --draft <findings + recommended fix, plus a reply to whoever reported it if someone did>`), so they reach his phone, and also returns them in `print:`. Then decide by default, recording a `D<n>`:
-- **Small, clear fix inside authority** (same repo, under ~200 lines, nothing on the escalation list): the same task continues as the fix (`type: fix`, still `expedite`). Send the worker "fix it", then run the normal gates from `testing` on. A production bug on VIA ships to `main` (base-check rules still apply).
-- **Larger fix, or one needing a decision from him:** create a follow-up task with the findings as its spec (normal priority unless he said "fix it now", in which case also rush it), link it in the ledger, and complete the investigation task.
+**Findings** (`task <id> findings:` from the worker) go to Andrew at once: the `gate <id> findings` job always sends them as a follow-up, even when there's nothing for him to do (`policy.md` "Investigation results"; required, not optional) (`conductor-followup add --what "Findings for <title>: <root cause>" --draft <findings + recommended fix, plus a reply to whoever reported it if someone did>`), so they reach his phone, and also returns them in `print:`. Then:
+- **A fix is needed:** propose it (`conductor-propose add --from <id> --now` when it's a production bug or he said "fix it now", otherwise without `--now`; what = the fix, how = the approach from the findings, why = the impact), return `ask: Q<n>`, and complete the investigation task. Never start fixing without his OK, however small.
 - **Nothing to fix** (working as intended, or a data or client issue): complete the investigation task.
 
 **Completing an investigation with no code:** the `live` gate doesn't apply. Once findings are relayed to Andrew (a follow-up holding the answer must exist in `andrew_followups` for this task; check with `conductor-followup list` before completing, and create it if it's missing) and the worktree has no unpushed commits (`git status --porcelain` clean, nothing on the branch that matters), run `work-items complete` as in "done" and record the findings as the evidence. This is the one completion that doesn't need live evidence.

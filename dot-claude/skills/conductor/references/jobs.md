@@ -34,14 +34,15 @@ Every job: before starting, `conductor-ledger merge jobs.<job-id> '{"kind":..,"t
 | `qa` | sonnet | `jobs: qa <task>` |
 | `review` | opus | `jobs: review <task>` |
 | `live` | sonnet | `jobs: live <task>` |
-| `daily` | opus | first wake after 8:00am PST where `last_order_review` isn't today |
-| `rush` | opus | Andrew asked for work to start now: typed `rush`/`investigate`/"start X now", or a `rush:` message from another session. Spawn it **immediately**, even while a tick or other jobs are running |
+| `daily` | opus | first wake in working hours where `last_order_review` isn't today |
+| `rush` | opus | Andrew asked for work (investigations start now; code work is proposed for his OK): typed `rush`/`investigate`/"start X now", or a `rush:` message from another session. Spawn it **immediately**, even while a tick or other jobs are running |
 | `browser` | opus | a manual web step (policy.md "Manual web steps"): `jobs: browser <task> "<step>"` |
 | `answers` | sonnet | Andrew answered questions (AskUserQuestion result or typed `Q3: ...` / `D4: ...` / `F3 done`) |
 | `command` | sonnet (opus if it needs judgment: reorder, abandon, merge) | any other instruction from Andrew |
 
 ### tick
 Mechanical pipeline bookkeeping. Steps:
+0. `conductor-hours`: if it says `closed`, leave `ledger.inbox` alone, log one line, and return nothing (the dispatcher shouldn't have spawned you).
 1. Consume `ledger.inbox` (worker messages, monitor events) and clear it. (Dashboard messages now arrive via the dispatcher's `web-inbox` monitor, not the inbox; legacy) entries `from: "andrew (web)"` are Andrew typing in the dashboard (bin/conductor-web), exactly as if he typed in the conductor window: `Q<n>:`/`D<n>:`/`F<n> done` → return `jobs: answers "<text>"`; a request for new work → `jobs: rush "<text>"`; anything else → `jobs: command "<text>"`. Then delete `web_sent` entries older than 2h or whose question/decision has been answered (`conductor-ledger del web_sent.<key>`).
 2. `bin/conductor-sync --json`. Reconcile: new in_progress tasks → `untriaged`; done in developerly → move the entry to `done.<id>`.
 3. **Audit first:** run `~/.claude/skills/conductor/bin/conductor-audit` and resolve **every** line it prints in this tick: merge, re-review, relaunch, advance, complete, launch, delete stale job entries. Don't explain a line away. If one is a false alarm, fix the ledger field that misleads it (e.g. a `resume_when` naming a closed Q/F). The tick isn't done until a re-run prints nothing you could have acted on. Then **every** task gets a step each tick, not just the first or the busiest. Go in developerly order and skip only tasks with a running job. For each, take the next **mechanical** step from `pipeline.md`: relay findings to workers, nudge idle workers, send ship instructions, run `conductor-base-check`, find deploy runs (return a `monitor:` line), complete tasks whose `live` evidence is recorded, handle `expedite` tasks first (their worker messages, findings and gates go to the front, and a `task <id> findings:` message becomes `print:` + `push:` + `jobs: gate <id> findings`, and that gate always ends with an answer follow-up; never complete an investigation task that has no follow-up in `andrew_followups`), count working slots per `policy.md` Limits (expedite tasks excluded) and launch into **every** free slot (one `gate <task> spec` per slot, all in one `jobs:` line), check waiting tasks for a way back (Limits), and run the "Launch check" from `pipeline.md` (launched more than 10 minutes ago, no `started` and no session means it failed: relaunch it). Anything needing judgment → return it in `jobs:` (`gate <task> <stage>` for spec, testing, merge decision, untriaged triage; `qa`, `review`, `live` for those gates).
@@ -65,7 +66,7 @@ Live checks from `projects.md` for the deployed task; record evidence; regressio
 The "Daily" section of `policy.md`, including `conductor-followup remind` and open follow-ups first in the summary, and Hermes daily from `hermes.md` (use `conductor-board --json` here - once a day). Return the summary in `print:` and one `push:`.
 
 ### rush
-Create and launch one task right now per `pipeline.md` "Rush tasks". Don't count slots and don't wait for a tick. `rush <id>` on an existing task: set `expedite: true` and, if it's still todo, launch it now. Return `print:` with the task id, title, project and base.
+Per `pipeline.md` "Rush tasks": an investigation he asked for is created (`conductor-propose add --type investigation --asked "<his words>" ...`, then `conductor-propose create Q<n>`) and launched now; code work is proposed (`conductor-propose add --now ...`) and returned as `ask: Q<n>`. Don't count slots and don't wait for a tick. `rush <id>` on an existing task: set `expedite: true` and, if it's still todo, launch it now (no proposal: the task exists). Return `print:` with what you did, in words.
 
 ### browser
 Do one manual web step in the conductor's own Chrome (policy.md "Manual web steps") with `~/.claude/skills/conductor/bin/browser-worker`:
@@ -77,7 +78,7 @@ Do one manual web step in the conductor's own Chrome (policy.md "Manual web step
 Return `done:` with what you did. If it couldn't be done, add a follow-up saying what you tried and the one thing Andrew needs to do.
 
 ### answers
-Apply each answer per `policy.md` "Answers" (`F<n> done` → `conductor-followup done`); relay to workers; return follow-up `jobs:`.
+Apply each answer per `policy.md` "Answers" (`F<n> done` → `conductor-followup done`); relay to workers; return follow-up `jobs:`. **Proposals** (questions with `kind: proposal`): "Approve" → `conductor-propose create Q<n>` → `<local_id> queue|now`. On `now`, set it up as a rush (ledger `expedite: true`, launch per "Rush tasks"), or on `queue` leave it in todo for the normal order. Either way, if it came from another task (`proposal.from_task`), link it in that task's ledger entry. "No" → mark answered and log a `D<n>`. Anything else (a change to the plan) → edit `questions.<i>.proposal` to match his words, then create it if he also approved, or propose the revised version again.
 
 ### command
 Do what Andrew asked within policy; `status` = `conductor-ledger summary` + `conductor-sync` table, formatted compactly in `print:`.

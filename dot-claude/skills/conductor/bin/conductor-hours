@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""When the conductor may work: Andrew's working hours (Andrew, 2026-10-16: "I only want it to work when I'm working").
+
+  conductor-hours                 exit 0 + "open until 6:00 PM PST", or exit 1 + "closed: <why>; opens <when>"
+  conductor-hours merge           like the above, but also closed in the last 30 min of the day (no merge or deploy
+                                  starts that would finish after Andrew stops)
+  conductor-hours wait            seconds until it opens (0 when open)
+  conductor-hours show            the config
+  conductor-hours set 08:00 18:00 [Mon-Fri|Mon,Tue,...]   change the hours
+  conductor-hours extend 20:00    stay open today until then (Andrew is working late and asked for something)
+  conductor-hours pause [note]    closed until resume (Andrew's `pause`)
+  conductor-hours resume          lift the pause and any extension
+
+Config lives in ledger.json: `hours` {start, end, days (0=Mon)}, `hours_extend_until` (ISO), `paused` {since, by, note}.
+Times are America/Los_Angeles.
+"""
+import datetime, fcntl, json, os, sys
+from zoneinfo import ZoneInfo
+
+DIR = os.path.expanduser("~/.local/share/conductor")
+LEDGER = os.path.join(DIR, "ledger.json")
+TZ = ZoneInfo("America/Los_Angeles")
+DEFAULT = {"start": "08:00", "end": "18:00", "days": [0, 1, 2, 3, 4]}
+DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+MERGE_STOP_MIN = 30
+
+
+def load():
+    try:
+        return json.load(open(LEDGER))
+    except (OSError, ValueError):
+        return {}
+
+
+def save(fn):
+    with open(os.path.join(DIR, ".lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        d = load()
+        fn(d)
+        json.dump(d, open(LEDGER + ".tmp", "w"), indent=1)
+        os.replace(LEDGER + ".tmp", LEDGER)
+
+
+def hm(s):
+    h, m = s.split(":")
+    return datetime.time(int(h), int(m))
+
+
+def clock(t):
+    return t.strftime("%-I:%M %p").replace(":00 ", " ") + " PST"
+
+
+def window(cfg, day):
+    """(open, close) datetimes for a calendar day, or None if it's not a working day."""
+    if day.weekday() not in cfg["days"]:
+        return None
+    return (datetime.datetime.combine(day, hm(cfg["start"]), TZ), datetime.datetime.combine(day, hm(cfg["end"]), TZ))
+
+
+def state(merge=False):
+    """-> (open: bool, message, seconds until open)"""
+    d = load()
+    cfg = {**DEFAULT, **(d.get("hours") or {})}
+    now = datetime.datetime.now(TZ)
+    if d.get("paused"):
+        p = d["paused"]
+        return False, f"closed: paused by Andrew since {p.get('since', '?')}; opens when he says resume", 3600
+    ext = d.get("hours_extend_until")
+    ext = datetime.datetime.fromisoformat(ext) if ext else None
+    if ext and now < ext:
+        stop = ext - datetime.timedelta(minutes=MERGE_STOP_MIN)
+        if merge and now >= stop:
+            return False, f"closed for merges: extension ends {clock(ext)}", 3600
+        return True, f"open until {clock(ext)} (extended)", 0
+    w = window(cfg, now.date())
+    if w and w[0] <= now < w[1]:
+        if merge and now >= w[1] - datetime.timedelta(minutes=MERGE_STOP_MIN):
+            return False, f"closed for merges: the day ends {clock(w[1])}, no merge or deploy starts after {clock(w[1] - datetime.timedelta(minutes=MERGE_STOP_MIN))}", int((window_next(cfg, now)[0] - now).total_seconds())
+        return True, f"open until {clock(w[1])}", 0
+    nxt = window_next(cfg, now)[0]
+    when = clock(nxt) if nxt.date() == now.date() else f"{DAYS[nxt.weekday()]} {clock(nxt)}"
+    return False, f"closed: outside working hours ({cfg['start']}-{cfg['end']} {','.join(DAYS[i] for i in cfg['days'])}); opens {when}", int((nxt - now).total_seconds())
+
+
+def window_next(cfg, now):
+    for i in range(0, 8):
+        w = window(cfg, now.date() + datetime.timedelta(days=i))
+        if w and w[0] > now:
+            return w
+    return (now + datetime.timedelta(hours=1), None)
+
+
+def main():
+    a = sys.argv[1:]
+    cmd = a[0] if a else "check"
+    if cmd in ("check", "merge"):
+        ok, msg, _ = state(merge=cmd == "merge")
+        print(msg)
+        sys.exit(0 if ok else 1)
+    if cmd == "wait":
+        print(state()[2])
+    elif cmd == "show":
+        d = load()
+        print(json.dumps({"hours": {**DEFAULT, **(d.get("hours") or {})}, "hours_extend_until": d.get("hours_extend_until"),
+                          "paused": d.get("paused")}, indent=1))
+    elif cmd == "set":
+        start, end = a[1], a[2]
+        hm(start), hm(end)
+        days = DEFAULT["days"]
+        if len(a) > 3:
+            spec = a[3]
+            if "-" in spec:
+                x, y = (DAYS.index(s[:3].title()) for s in spec.split("-"))
+                days = list(range(x, y + 1))
+            else:
+                days = [DAYS.index(s[:3].title()) for s in spec.split(",")]
+        save(lambda d: d.__setitem__("hours", {"start": start, "end": end, "days": days}))
+        print(state()[1])
+    elif cmd == "extend":
+        until = datetime.datetime.combine(datetime.datetime.now(TZ).date(), hm(a[1]), TZ)
+        if until <= datetime.datetime.now(TZ):
+            until += datetime.timedelta(days=1)
+        save(lambda d: d.__setitem__("hours_extend_until", until.isoformat()))
+        print(state()[1])
+    elif cmd == "pause":
+        now = datetime.datetime.now(TZ)
+        save(lambda d: d.__setitem__("paused", {"since": clock(now) + now.strftime(" %-m/%-d"), "by": "Andrew",
+                                                  "note": " ".join(a[1:])}))
+        print(state()[1])
+    elif cmd == "resume":
+        def f(d):
+            d.pop("paused", None)
+            d.pop("hours_extend_until", None)
+        save(f)
+        print(state()[1])
+    else:
+        sys.exit(__doc__)
+
+
+if __name__ == "__main__":
+    main()

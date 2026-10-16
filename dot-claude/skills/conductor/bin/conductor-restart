@@ -50,4 +50,4 @@ PY
 echo "$(date '+%F %T') restarted (old ${id:-none})" >> ~/.local/share/conductor/watchdog.log
 [[ ${1:-} == --no-start ]] && exit 0
 cd "$HOME/Work"
-claude --bg --name conductor --model sonnet --effort low --permission-mode bypassPermissions "/loop /conductor"
+claude --bg --name conductor --model sonnet --effort low --permission-mode bypassPermissions --settings "$HOME/.claude/skills/conductor/settings.json" "/loop /conductor"

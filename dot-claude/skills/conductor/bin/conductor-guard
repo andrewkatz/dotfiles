@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+"""PreToolUse hook for the conductor session and its jobs (wired in ../settings.json via bin/conductor).
+Enforces two of Andrew's rules no matter what a job decides (2026-10-16):
+  1. No new developerly tasks without his approval: `developerly ... create` is refused; the only way is
+     `conductor-propose create Q<n>` after he approved that proposal.
+  2. Work only in his working hours (`conductor-hours`): launches, relaunches, merges and script deploys are
+     refused outside them; merges and deploys also in the last 30 minutes of the day.
+Exit 2 blocks the tool call and shows stderr to the model.
+"""
+import json, os, re, subprocess, sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+
+try:
+    cmd = (json.load(sys.stdin).get("tool_input") or {}).get("command") or ""
+except ValueError:
+    sys.exit(0)
+
+
+def block(msg):
+    print(msg, file=sys.stderr)
+    sys.exit(2)
+
+
+def closed(kind):
+    r = subprocess.run([os.path.join(HERE, "conductor-hours"), *([kind] if kind else [])], capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode else None
+
+
+if re.search(r"\bdeveloperly\b[^|;&\n]*\b(work-items|tasks)\s+create\b", cmd):
+    block("refused: the conductor never creates tasks on its own (Andrew, 2026-10-16). Propose it instead: "
+          "`conductor-propose add ...` (what, how, why); after Andrew approves, `conductor-propose create Q<n>`.")
+
+if re.search(r"\bdeveloperly\b[^|;&\n]*\bwork-items\s+launch\b|\bconductor-relaunch\b", cmd):
+    why = closed(None)
+    if why:
+        block(f"refused: {why}. Launches wait for working hours; leave the task where it is.")
+
+if re.search(r"\bgh\s+pr\s+merge\b|\bbin/deploy\b", cmd):
+    why = closed("merge")
+    if why:
+        block(f"refused: {why}. Leave the PR green and unmerged; the first tick of the next working day merges it.")

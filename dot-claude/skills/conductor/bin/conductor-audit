@@ -7,7 +7,7 @@
 
 Checks: green PRs left unmerged, idle workers in a working stage, failed launches, waiting tasks whose
 condition already happened, investigations left open, free slots with todo work, ledger/developerly drift,
-stale job entries, malformed ledger keys.
+stale job entries, malformed ledger keys, approved proposals never created.
 """
 import datetime, json, os, re, subprocess, sys, time
 
@@ -116,6 +116,12 @@ def main():
             out.append(f"{name}: ledger says {stage}, developerly still in progress -> complete it in developerly")
         if stage == "parked" and s and s.get("session_status") == "busy":
             out.append(f"{name}: parked but its worker is busy -> update the stage")
+
+    for q in qs:
+        p = isinstance(q, dict) and q.get("proposal")
+        if p and q.get("status") == "answered" and not p.get("created") \
+                and re.match(r"\s*(approve|yes|ok|go)\b", str(q.get("answer") or ""), re.I):
+            out.append(f"proposal {q['id']} ({p.get('title', '')[:60]}) approved, not created -> conductor-propose create {q['id']}")
 
     for tid, s in live.items():
         if tid not in tasks and s.get("project") not in PAUSED_PROJECTS:

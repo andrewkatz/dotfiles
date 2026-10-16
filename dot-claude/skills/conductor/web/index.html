@@ -132,7 +132,10 @@ function render(d) {
   for (const q of qs) {
     const opts = (q.options || []).map((o) => `<button data-say="${esc(q.id + ': ' + o)}" data-ref="${esc(q.id)}">${esc(o)}</button>`).join('')
     h += `<div class="card ${q.blocking ? 'urgent' : ''}"><div class="row"><span class="id">${esc(q.id)}</span><div class="grow">
-      <div>${q.blocking ? '<b>Blocking</b> · ' : ''}${q.task ? tname(q.task) + ' · ' : ''}${link(q.question)}</div>
+      ${q.proposal ? `<div><b>New task</b> · ${esc(q.proposal.project)}${q.proposal.from_task ? ' · from ' + tname(q.proposal.from_task) : ''}</div>
+      <div><b>${esc(q.proposal.title)}</b></div>
+      <div class="small">What: ${link(q.proposal.what)}</div><div class="small">How: ${link(q.proposal.how)}</div><div class="small">Why: ${link(q.proposal.why)}</div>`
+      : `<div>${q.blocking ? '<b>Blocking</b> · ' : ''}${q.task ? tname(q.task) + ' · ' : ''}${link(q.question)}</div>`}
       ${q.recommendation ? `<div class="small rec">Recommended: ${esc(q.recommendation)}</div>` : ''}
       ${opts ? `<div class="btns">${opts}</div>` : ''}
       <form data-ref="${esc(q.id)}"><input type="text" placeholder="Answer ${esc(q.id)}…"><button>Send</button></form>
