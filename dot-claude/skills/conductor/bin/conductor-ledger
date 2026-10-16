@@ -102,8 +102,9 @@ def main():
             doc = read(f)
             n = doc.setdefault("next_ids", {}).get(prefix, 1)
             n = max([n, int(doc.pop("next_" + prefix.lower(), 0))] + [  # never reuse: skip past any id already used
-                int(m) + 1 for name in (MAIN, "archive.json") if os.path.exists(os.path.join(DIR, name))
-                for m in re.findall(r'"id":\s*"' + re.escape(prefix) + r'(\d+)"', open(os.path.join(DIR, name)).read())])
+                int(m) + 1 for name in (MAIN, "archive.json", "done.json") if os.path.exists(os.path.join(DIR, name))
+                # ids appear as "id" values, as map keys ("D165": ...) and inside notes ("D167: ...")
+                for m in re.findall(r'(?<![\w-])' + re.escape(prefix) + r'(\d{1,5})\b', open(os.path.join(DIR, name)).read())])
             doc["next_ids"][prefix] = n + 1
             write(f, doc)
             print(f"{prefix}{n}")
