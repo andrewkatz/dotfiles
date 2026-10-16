@@ -1,6 +1,6 @@
 # Project profiles
 
-Every developerly project is fully managed (Andrew, 2026-10-14). A project with no profile here gets triage and reporting only, until it has one (ask Andrew for the blanks: base branch, merge style, CI, deploy, live URLs, health signals).
+**This file is in a public repo.** Account ids, hostnames, instance ids, vault and account names, and credential locations go in `~/.local/share/conductor/private.md`, never here. Every developerly project is fully managed (Andrew, 2026-10-14). A project with no profile here gets triage and reporting only, until it has one (ask Andrew for the blanks: base branch, merge style, CI, deploy, live URLs, health signals).
 
 ## Merge and deploy authority (Andrew, 2026-10-14)
 
@@ -27,9 +27,11 @@ Every developerly project is fully managed (Andrew, 2026-10-14). A project with 
 - **Never** merge or PR `beta` → `main`, and never merge any PR into `main` that `conductor-base-check --pr` refuses (exit 2). Andrew promotes releases manually.
 - **CI:** `ci.yml` on PRs (required). Merge with `gh pr merge --admin --merge` - recent history uses merge commits ("Merge pull request #N").
 - **Deploy:** `deploy.yml` runs on push to `beta` → beta.via.tools and to `main` → app.via.tools (Kamal; concurrency group `deploy-<branch>`).
+- **Private access notes** (AWS profile, production runner, Snowflake, 1Password accounts, cached logins): `~/.local/share/conductor/private.md`. Read it when a job needs them.
 - **Shared database:** beta and production share one database. Migrations follow SKILL.md → "Migrations" (separate PR, deployed first, compatible with `main`).
 - **Live checks:**
-  - Exercise the acceptance criteria on https://beta.via.tools (or https://app.via.tools for `main`) with agent-browser, headless. Beta (beta.via.tools) login credentials: 1Password item "Giant Partners Platform" in the Katz Family -> Giant Partners vault (per Andrew, Q36). Log in per the `dev-qa` skill's auth notes; if production login isn't possible, queue a question rather than skip.
+  - Exercise the acceptance criteria on https://beta.via.tools (or https://app.via.tools for `main`) with agent-browser, headless. Beta (beta.via.tools) login credentials: 1Password item "Giant Partners Platform" in the Katz Family -> Giant Partners vault (per Andrew, Q36). **Cached login (Andrew, 2026-10-16): never call `op` for this login (each non-TTY `op` call triggers a fresh 1Password approval).** Read `~/.local/share/conductor/beta-login.json` (chmod 600; `op item get --format json` output, fields `user[email]` / `user[password]`, e.g. `jq -r '.fields[]|select(.purpose=="USERNAME").value'`); never print the secret. If the file is missing or login fails, queue a question for Andrew rather than calling `op` repeatedly. Log in per the `dev-qa` skill's auth notes; if production login isn't possible, queue a question rather than skip.
+  - **Test lists (Andrew, Q110/D219, 2026-10-16):** for live checks the conductor may create clearly named, tiny test lists (name "CONDUCTOR TEST <task> - safe to delete", a handful of rows, ~0 credits) in the **Giant Partners** account only, never in a client account. Record the list id in the task's evidence so Andrew can delete it; never delete it yourself. Don't save production audiences; use previews/counts only.
   - VIA MCP: `job_failures` for the window since deploy; compare against the hour before the deploy.
   - Sentry: `~/.claude/skills/conductor/bin/conductor-sentry new-since <deploy finish time>` (via + via-javascript; token in `~/.config/sentry-to-developerly.env`, read by the script only).
   - Read-only production inspection when needed: the repo's `production-troubleshoot` skill.
@@ -214,3 +216,4 @@ Every developerly project is fully managed (Andrew, 2026-10-14). A project with 
 - **Live check:** after merge, `bin/diff` reports no missing links, `jq . ~/.claude/settings.json` parses, and a fresh `claude -p "ok"` or `zsh -ic true` runs without errors.
 - **Never automate:** committing anything secret (public repo; secrets live in the separate sops repo, `dotfiles-secrets`, `bin/ss`), running `bin/install` or `bin/update` (brew, stow, packages). Merging is authorized (Andrew: auto for all). After merge, `git -C ~/Work/dotfiles pull --ff-only` makes it live. If that fails because of Andrew's uncommitted edits, don't stash, reset or commit them; push to Andrew. A merged change to `dot-claude/skills/conductor/` takes effect for the next job, so say so in the `print:` line.
 
+- Platform enum integers: ExternalAccount.service_type integers must be unique across ALL open branches and are allocated here; check before adding one: 0 facebook, 1 google_ad, 2 retired, 3 pinterest, 4 bing_ad, 5 linkedin, 6 hubspot_crm, 7 tiktok; next free 8 (ledger: platform_enum_allocation). Production only has rows for 0 and 1 (checked 2026-10-16).

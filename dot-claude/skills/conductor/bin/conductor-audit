@@ -7,7 +7,7 @@
 
 Checks: green PRs left unmerged, idle workers in a working stage, failed launches, waiting tasks whose
 condition already happened, investigations left open, free slots with todo work, ledger/developerly drift,
-stale job entries, malformed ledger keys, approved proposals never created.
+stale job entries, malformed ledger keys, approved proposals never created, Docker stacks left running for tasks past testing.
 """
 import datetime, json, os, re, subprocess, sys, time
 
@@ -145,6 +145,13 @@ def main():
             n = sum(1 for t in todo if t["project"] == proj)
             out.append(f"{proj}: {busy.get(proj, 0)} actually running, {n} todo -> launch into {free} free slot(s) now")
 
+    try:
+        gc = subprocess.run([os.path.join(HERE, "conductor-docker-gc"), "--dry-run"], capture_output=True, text=True, timeout=120).stdout
+        idle = [l.split()[2] for l in gc.splitlines() if l.startswith("would stop")]
+        if idle:
+            out.append(f"Docker: {len(idle)} stack(s) running for tasks not using them ({', '.join(idle[:4])}{'...' if len(idle) > 4 else ''}) -> run conductor-docker-gc")
+    except Exception:  # noqa: BLE001
+        pass
     try:
         nets = len(subprocess.run(["docker", "network", "ls", "-q"], capture_output=True, text=True, timeout=30).stdout.split())
         if nets >= 25:

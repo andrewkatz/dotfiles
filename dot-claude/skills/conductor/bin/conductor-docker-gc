@@ -1,26 +1,48 @@
 #!/usr/bin/env bash
-# Stop the Docker compose stacks of finished tasks. Every developerly worktree starts its own stack (and network),
-# and nothing stops it when the task completes; OrbStack runs out of network address pools at ~30.
-# A stack is finished when its worktree is gone, or it's a developerly worktree (<repo>.andrewkatz-*) that's no
-# longer in progress and untouched for 6h. Uses `compose down` without -v, so volumes are kept. Leaves everything else alone.
-#   conductor-docker-gc            stop finished stacks, print what it did and the network count
+# Stop Docker compose stacks nobody is using. Every developerly worktree starts its own stack (MySQL, Redis, Mailhog
+# and a network); OrbStack runs out of network pools at ~30 and memory well before that (MySQL OOM, 2026-10-16).
+# A stack is stopped when:
+#   - its worktree is gone, or it's a developerly worktree (<repo>.andrewkatz-*) no longer in progress and untouched for 6h;
+#   - its task is in progress but past the stages that run code locally: deploying, live, waiting, parked, escalated,
+#     blocked, findings, done (merged or waiting on someone - nothing needs its database). A task sent back to
+#     work restarts its stack (`mise exec -- bin/up` in the worktree) before the worker continues.
+# Uses `compose down` without -v, so volumes (the dev databases) are kept.
+#   conductor-docker-gc            stop them, print what it did and the network count
 #   conductor-docker-gc --dry-run  only list them
 set -uo pipefail
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
-live=$("$HERE/conductor-sync" --json | python3 -c 'import json,sys; print("\n".join(s["worktree"] for s in json.load(sys.stdin) if s.get("worktree")))') || {
+# worktree<TAB>stage for every in-progress task (stage from the ledger, "-" if it isn't there)
+live=$("$HERE/conductor-sync" --json | python3 -c '
+import json, os, sys
+led = json.load(open(os.path.expanduser("~/.local/share/conductor/ledger.json"))).get("tasks", {})
+for s in json.load(sys.stdin):
+    if s.get("worktree"):
+        print(s["worktree"] + "\t" + str((led.get(str(s["local_id"])) or {}).get("stage") or "-"))') || {
   echo "conductor-sync failed; not touching anything" >&2; exit 1; }
+IDLE_STAGES=" deploying live waiting parked escalated blocked findings done dropped "
 n=0
 while IFS='|' read -r project dir; do
   [[ -n $project && -n $dir ]] || continue
-  if [[ -d $dir ]]; then
-    [[ $(basename "$dir") == *.andrewkatz-* ]] || continue        # not a developerly worktree: leave it
-    grep -qxF "$dir" <<<"$live" && continue                       # task still in progress
-    [[ -n $(find "$dir" -maxdepth 3 -mmin -360 -not -path "*/tmp/*" -not -path "*/log/*" -print -quit 2>/dev/null) ]] && continue  # touched in 6h: someone may be using it
+  # a project name used from more than one folder (e.g. via-platform): never stop it from here
+  (( $(docker ps --filter "label=com.docker.compose.project=$project" --format '{{.Label "com.docker.compose.project.working_dir"}}' | sort -u | wc -l) > 1 )) && continue
+  why=""
+  if [[ ! -d $dir ]]; then
+    why="worktree gone"
+  else
+    [[ $(basename "$dir") == *.andrewkatz-* ]] || continue        # not Andrew's developerly worktree: leave it
+    stage=$(awk -F'\t' -v d="$dir" '$1 == d {print $2}' <<<"$live")
+    if [[ -n $stage ]]; then
+      [[ $IDLE_STAGES == *" $stage "* ]] || continue                 # task still running code locally
+      why="task is $stage"
+    else
+      [[ -n $(find "$dir" -maxdepth 3 -mmin -360 -not -path "*/tmp/*" -not -path "*/log/*" -print -quit 2>/dev/null) ]] && continue
+      why="task finished"
+    fi
   fi
-  if [[ ${1:-} == --dry-run ]]; then echo "would stop $project ($dir)"; else
-    docker compose -p "$project" down --remove-orphans >/dev/null 2>&1 && echo "stopped $project" || echo "failed $project"
+  if [[ ${1:-} == --dry-run ]]; then echo "would stop $project ($why)"; else
+    docker compose -p "$project" down --remove-orphans >/dev/null 2>&1 && echo "stopped $project ($why)" || echo "failed $project"
   fi
   n=$((n + 1))
-done < <(docker ps --format '{{.Label "com.docker.compose.project"}}|{{.Label "com.docker.compose.project.working_dir"}}' | sort -u)
+done < <(docker ps --filter label=com.docker.compose.project --format '{{.Label "com.docker.compose.project"}}|{{.Label "com.docker.compose.project.working_dir"}}' | sort -u)
 [[ ${1:-} == --dry-run ]] || docker network prune -f >/dev/null 2>&1
-echo "$n finished stack(s); $(docker network ls -q | wc -l | tr -d ' ') networks (limit ~30)"
+echo "$n stack(s) to stop; $(docker ps -q | wc -l | tr -d ' ') containers running, $(docker network ls -q | wc -l | tr -d ' ') networks (limit ~30)"
