@@ -24,7 +24,7 @@
   - **New launches use the task's label.** Each developerly task carries a `base_branch` (`work-items get --json`). Launch with exactly that (`work-items launch` uses it automatically; still pass `--base` explicitly so the ledger and the launch agree). Never launch a VIA task with no label.
   - **Labeling rule** (used in the daily order review, see SKILL.md): **main** = fixes or improvements to behavior that's live on app.via.tools and should reach production before the next release, provided the code involved exists on `main`. **beta** = new features, anything building on beta-only code, and anything that can wait for the release. Check "exists on main" with `git -C ~/Work/platform grep -l <symbol> origin/main` rather than guessing. A production fix whose code only exists on beta can't go to main: label it beta and note it.
   - Main-based fixes still reach beta later through Andrew's regular main → beta merges; don't open those yourself.
-- **Never** merge or PR `beta` → `main`, and never merge any PR into `main` that `conductor-base-check --pr` refuses (exit 2). Andrew promotes releases manually.
+- **Never** merge or PR `beta` → `main`, and never merge any PR into `main` that `conductor-base-check <path> --pr` refuses (exit 2). Andrew promotes releases manually.
 - **CI:** `ci.yml` on PRs (required). Merge with `gh pr merge --admin --merge` - recent history uses merge commits ("Merge pull request #N").
 - **Deploy:** `deploy.yml` runs on push to `beta` → beta.via.tools and to `main` → app.via.tools (Kamal; concurrency group `deploy-<branch>`).
 - **Private access notes** (AWS profile, production runner, Snowflake, 1Password accounts, cached logins): `~/.local/share/conductor/private.md`. Read it when a job needs them.

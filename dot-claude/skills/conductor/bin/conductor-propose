@@ -4,12 +4,19 @@ I want to know what it is, how we're going to do it, and why we need to do it").
 
   conductor-propose add --project VIA --title "..." --what "..." --how "..." --why "..." \
       [--kind feature|bug_fix] [--base beta|main] [--type fix|investigation] [--from TASK] [--now] [--sync] \
-      [--details FILE]
+      [--details FILE] [--replaces Q<n>,...] [--distinct-from Q<n>,...]
       Queues a question (non-blocking) carrying the proposal and prints its id (Q<n>). --now = Andrew asked for it
       to start right away (a rush), so the recommended answer is "Approve, start now". --details: acceptance
       criteria / extra spec appended to the task description. Return `ask: Q<n>` so it reaches him.
       --asked "<Andrew's words>": only with --type investigation. He asked for this investigation himself, so his
       request is the approval: it's recorded approved ("start now") and `create` works right away. Never for code work.
+      One proposal per piece of follow-up work: several related follow-ups from one task (e.g. "tighten the rest of
+      the Engineers policy") go in ONE proposal with a checklist in --details, not one each. Refused while an open
+      question on the same task, or a proposal with a similar title, exists: fold the new scope into it with
+      `update`, or pass --replaces (withdraws them; restate their scope here) or --distinct-from (each truly needs
+      its own answer).
+  conductor-propose update Q<n> [--title ...] [--what ...] [--how ...] [--why ...] [--add-details "..."]
+      Changes an open proposal in place (rewrites its question, re-asks it). Return `ask: Q<n>` again.
   conductor-propose create Q<n>
       Only after Andrew approved it (status answered, answer starts with "Approve"/"yes"): creates the developerly
       task from the proposal and prints `<local_id> <now|queue>`. Apply any changes he asked for to
@@ -34,6 +41,14 @@ def questions():
     return json.loads(ledger("get", "questions") or "[]")
 
 
+def question_text(p):
+    return f"New task ({p['project']}): {p['title']}. What: {p['what']} How: {p['how']} Why: {p['why']} Create it?"
+
+
+def ids(v):
+    return [x.strip() for x in (v or "").split(",") if x.strip()]
+
+
 def add(o):
     details = open(o.details).read().strip() if o.details else ""
     qid = ledger("next-id", "Q")
@@ -41,7 +56,7 @@ def add(o):
     p.update({"from_task": o.from_task, "start": "now" if o.now else "queue", "details": details})
     import datetime
     q = {"id": qid, "kind": "proposal", "task": o.from_task,
-         "question": f"New task ({o.project}): {o.title}. What: {o.what} How: {o.how} Why: {o.why} Create it?",
+         "question": question_text(p), "replaces": ids(o.replaces), "distinct_from": ids(o.distinct_from),
          "options": [START_NOW, APPROVE, NO] if o.now else [APPROVE, START_NOW, NO],
          "recommendation": START_NOW if o.now else APPROVE, "blocking": False,
          "meanwhile": "nothing is created until you approve",
@@ -51,6 +66,26 @@ def add(o):
     ledger("append", "questions", json.dumps(q))
     ledger("log", str(o.from_task or "-"), "proposed", f"{qid}: {o.title}")
     print(qid)
+
+
+def update(argv):
+    ap = argparse.ArgumentParser(usage=__doc__)
+    ap.add_argument("qid")
+    for k in ("title", "what", "how", "why", "add_details"):
+        ap.add_argument(f"--{k.replace('_', '-')}")
+    o = ap.parse_args(argv)
+    q = next((q for q in questions() if q.get("id") == o.qid), None)
+    if not q or not q.get("proposal") or q.get("status") != "open":
+        sys.exit(f"refused: {o.qid} isn't an open proposal")
+    p = dict(q["proposal"])
+    p.update({k: getattr(o, k) for k in ("title", "what", "how", "why") if getattr(o, k)})
+    if o.add_details:
+        p["details"] = "\n".join(x for x in (p.get("details"), o.add_details) if x)
+    expect = {"status": "open", "question": q["question"]}
+    ledger("merge-id", "questions", o.qid, json.dumps(expect),
+           json.dumps({"proposal": p, "question": question_text(p), "asked_at": None}))
+    ledger("log", str(p.get("from_task") or "-"), "proposal-updated", f"{o.qid}: {p['title']}")
+    print(o.qid)
 
 
 def create(qid):
@@ -86,6 +121,8 @@ def create(qid):
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "create":
         return create(sys.argv[2])
+    if len(sys.argv) > 1 and sys.argv[1] == "update":
+        return update(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "list":
         for q in questions():
             if q.get("proposal") and q.get("status") == "open":
@@ -103,6 +140,8 @@ def main():
     ap.add_argument("--sync", action="store_true")
     ap.add_argument("--details")
     ap.add_argument("--asked")
+    ap.add_argument("--replaces")
+    ap.add_argument("--distinct-from", dest="distinct_from")
     o = ap.parse_args()
     if o.asked and o.type != "investigation":
         sys.exit("refused: --asked is only for investigations Andrew asked for; code work needs his approval")

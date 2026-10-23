@@ -2,8 +2,11 @@
 # The conductor's browser for manual web steps: a dedicated Google Chrome profile, separate from
 # Andrew's own browsers. Hidden (headless) normally, so it never takes focus. Logins persist in the
 # profile; when a site needs Andrew, `signin` opens one visible window, waits for him, then hides again.
+# `--stealth` swaps agent-browser for bin/stealth-browser (Patchright, visible-but-minimized Chrome, human-paced
+# input) on the same profile, for sites that block bots: Cloudflare challenges, Google sign-in, vendor consoles.
 #
-#   browser-worker begin <job-id>        take the browser (one job at a time; waits up to 30 min)
+#   browser-worker begin <job-id> [--stealth]   take the browser (one job at a time; waits up to 30 min);
+#                                         again with/without --stealth to switch engines mid-job
 #   browser-worker ab <agent-browser args...>   drive it, e.g. `ab open <url>`, `ab snapshot -i`, `ab click @e3`
 #   browser-worker signin <url> <text-or-url-glob shown once signed in> [minutes]
 #                                         visible window for Andrew to sign in; waits (default 30 min)
@@ -20,26 +23,40 @@ mkdir -p "$PROFILE" "$(dirname "$LOCK")"
 CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$("$CHROME" --version | grep -oE '[0-9]+' | head -1).0.0.0 Safari/537.36"
 LAUNCH=(--executable-path "$CHROME" --user-agent "$UA" --args "--disable-blink-features=AutomationControlled")
-ab() { agent-browser --profile "$PROFILE" --session "$SESSION" "${LAUNCH[@]}" "$@"; }
+STEALTH="$(dirname "$0")/stealth-browser"
 owner() { [[ -f $LOCK ]] && cut -d' ' -f1 "$LOCK" || true; }
+stealth() { [[ -f $LOCK && $(cut -d' ' -f3 "$LOCK") == stealth ]]; }
+ab() {
+  if stealth; then "$STEALTH" --profile "$PROFILE" "$@"
+  else agent-browser --profile "$PROFILE" --session "$SESSION" "${LAUNCH[@]}" "$@"; fi
+}
+close_all() {  # both engines share the profile, so only one may hold it
+  agent-browser --session "$SESSION" close >/dev/null 2>&1 || true
+  "$STEALTH" close >/dev/null 2>&1 || true
+}
 need_lock() { [[ -n $(owner) ]] || { echo "take the browser first: browser-worker begin <job-id>" >&2; exit 1; }; }
 
 matches() {  # current page shows the signed-in marker?
   local want=$1 url
-  url=$(agent-browser --session "$SESSION" get url 2>/dev/null || true)
+  url=$(ab get url 2>/dev/null || true)
   [[ $url == $want ]] && return 0
-  { agent-browser --session "$SESSION" get title; agent-browser --session "$SESSION" get text body; } 2>/dev/null | grep -qF -- "$want"
+  { ab get title; ab get text body; } 2>/dev/null | grep -qF -- "$want"
 }
 
 case "${1:-}" in
   check)
     [[ -w $PROFILE ]] && echo "ok: $PROFILE" ;;
   begin)
-    job=${2:?job id}
+    job=${2:?job id}; mode=normal; [[ ${3:-} == --stealth ]] && mode=stealth
     for _ in $(seq 360); do
       cur=$(owner)
       if [[ -z $cur || $cur == "$job" ]] || (( $(date +%s) - $(stat -f %m "$LOCK") > 7200 )); then
-        echo "$job $(date +%s)" > "$LOCK"; echo "browser is yours"; exit 0
+        if [[ $cur == "$job" ]] && { stealth && [[ $mode == stealth ]] || ! stealth && [[ $mode == normal ]]; }; then
+          :   # same job, same engine: keep the open browser
+        else
+          close_all
+        fi
+        echo "$job $(date +%s) $mode" > "$LOCK"; echo "browser is yours ($mode)"; exit 0
       fi
       sleep 5
     done
@@ -49,6 +66,15 @@ case "${1:-}" in
   signin)
     need_lock
     url=${2:?url}; want=${3:?text or URL glob that shows the sign-in worked}; mins=${4:-30}
+    if stealth; then   # already a real window: un-minimize it for Andrew, minimize again once he's in
+      ab open "$url" >/dev/null; ab show >/dev/null
+      for _ in $(seq $((mins * 6))); do
+        matches "$want" && { ab hide >/dev/null; echo "signed in"; exit 0; }
+        sleep 10
+      done
+      ab hide >/dev/null
+      echo "timed out after $mins min waiting for Andrew to sign in at $url" >&2; exit 1
+    fi
     agent-browser --session "$SESSION" close >/dev/null 2>&1 || true   # the hidden instance holds the profile
     for try in 1 2 3 4 5; do   # the hidden instance takes a moment to release the profile
       sleep 2
@@ -66,8 +92,8 @@ case "${1:-}" in
     echo "timed out after $mins min waiting for Andrew to sign in at $url" >&2; exit 1 ;;
   end)
     [[ $(owner) == "${2:?job id}" ]] || { echo "not yours"; exit 0; }
-    agent-browser --session "$SESSION" close >/dev/null 2>&1 || true
+    close_all
     rm -f "$LOCK"; echo "released" ;;
   *)
-    sed -n '2,14p' "$0"; exit 1 ;;
+    sed -n '2,17p' "$0"; exit 1 ;;
 esac

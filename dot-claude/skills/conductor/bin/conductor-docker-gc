@@ -3,6 +3,9 @@
 # and a network); OrbStack runs out of network pools at ~30 and memory well before that (MySQL OOM, 2026-10-16).
 # A stack is stopped when:
 #   - its worktree is gone, or it's a developerly worktree (<repo>.andrewkatz-*) no longer in progress and untouched for 6h;
+#   - but NEVER while its task has `dev_stack_in_use` set in the ledger, or an open Andrew follow-up with
+#     `needs_dev_server: true` (or pointing him at a localhost URL): Andrew is clicking through its dev server
+#     (1306 was stopped twice mid-OAuth-setup on 2026-10-19). Those stacks are kept and not reported;
 #   - its task is in progress but past the stages that run code locally: deploying, live, waiting, parked, escalated,
 #     blocked, findings, done (merged or waiting on someone - nothing needs its database). A task sent back to
 #     work restarts its stack (`mise exec -- bin/up` in the worktree) before the worker continues.
@@ -12,12 +15,19 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 # worktree<TAB>stage for every in-progress task (stage from the ledger, "-" if it isn't there)
+# (stage "in-use" when Andrew is using its dev server - see above)
 live=$("$HERE/conductor-sync" --json | python3 -c '
 import json, os, sys
-led = json.load(open(os.path.expanduser("~/.local/share/conductor/ledger.json"))).get("tasks", {})
+doc = json.load(open(os.path.expanduser("~/.local/share/conductor/ledger.json")))
+led = doc.get("tasks", {})
+fus = (doc.get("andrew_followups") or {}).values()
+in_use = {tid for tid, t in led.items() if isinstance(t, dict) and t.get("dev_stack_in_use")}
+in_use |= {str(f.get("task")) for f in fus if isinstance(f, dict) and f.get("status", "open") == "open"
+           and (f.get("needs_dev_server") or "localhost:" in str(f.get("what", "")))}
 for s in json.load(sys.stdin):
     if s.get("worktree"):
-        print(s["worktree"] + "\t" + str((led.get(str(s["local_id"])) or {}).get("stage") or "-"))') || {
+        tid = str(s["local_id"])
+        print(s["worktree"] + "\t" + ("in-use" if tid in in_use else str((led.get(tid) or {}).get("stage") or "-")))') || {
   echo "conductor-sync failed; not touching anything" >&2; exit 1; }
 IDLE_STAGES=" deploying live waiting parked escalated blocked findings done dropped "
 n=0

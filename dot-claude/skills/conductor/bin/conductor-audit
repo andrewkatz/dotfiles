@@ -124,6 +124,10 @@ def main():
                            f"developerly work-items complete {ref} --confirm={ref}, then move it to done")
             else:
                 out.append(f"{name}: {stage} and gone from developerly -> move tasks.{tid} to done.{tid} (off the dashboard)")
+        # dev_stack_in_use keeps its Docker stack out of conductor-docker-gc; clear it once Andrew's follow-up is done
+        if t.get("dev_stack_in_use") and not any(str(f.get("task")) == tid and f.get("id") in open_ids
+                                                 for f in followups.values() if isinstance(f, dict)):
+            out.append(f"{name}: dev_stack_in_use set but no open follow-up for it -> conductor-ledger del tasks.{tid}.dev_stack_in_use")
         if stage == "parked" and s and s.get("session_status") == "busy":
             out.append(f"{name}: parked but its worker is busy -> update the stage")
 
@@ -149,15 +153,31 @@ def main():
                 (tid in running or (s and s.get("session_status") == "busy")):
             busy[t.get("project") or (s or {}).get("project")] = busy.get(t.get("project") or (s or {}).get("project"), 0) + 1
     total = sum(busy.values())
-    for proj in sorted({t["project"] for t in todo}):
+    # Finish-first mode (Andrew, 2026-10-19, D-entry in overrides.finish_first): free slots stay empty
+    # except for urgent todo tasks - expedite, pinned (focus), or listed in overrides.finish_first.urgent_ids.
+    ov = led.get("overrides") or {}
+    ff = ov.get("finish_first") or {}
+    launchable = todo
+    if ff.get("active"):
+        urgent = {str(i) for i in (ff.get("urgent_ids") or [])} | {str(i) for i in (ov.get("pins") or [])}
+        urgent |= {tid for tid, t in tasks.items() if isinstance(t, dict) and t.get("expedite")}
+        launchable = [t for t in todo if str(t["local_id"]) in urgent]
+    for proj in sorted({t["project"] for t in launchable}):
         free = min(PER_PROJECT - busy.get(proj, 0), TOTAL - total)
         if free > 0:
-            n = sum(1 for t in todo if t["project"] == proj)
-            out.append(f"{proj}: {busy.get(proj, 0)} actually running, {n} todo -> launch into {free} free slot(s) now")
+            n = sum(1 for t in launchable if t["project"] == proj)
+            what = "urgent todo (finish-first mode)" if ff.get("active") else "todo"
+            out.append(f"{proj}: {busy.get(proj, 0)} actually running, {n} {what} -> launch into {free} free slot(s) now")
 
     try:
         gc = subprocess.run([os.path.join(HERE, "conductor-docker-gc"), "--dry-run"], capture_output=True, text=True, timeout=120).stdout
-        idle = [l.split()[2] for l in gc.splitlines() if l.startswith("would stop")]
+        # conductor-docker-gc already skips stacks of tasks Andrew is using (dev_stack_in_use / open follow-up
+        # needing the dev server); belt and braces: never report a stack whose name ends in such a task id
+        keep = {tid for tid, t in tasks.items() if isinstance(t, dict) and t.get("dev_stack_in_use")}
+        keep |= {str(f.get("task")) for f in followups.values() if isinstance(f, dict) and f.get("id") in open_ids
+                 and (f.get("needs_dev_server") or "localhost:" in str(f.get("what", "")))}
+        idle = [p for p in (l.split()[2] for l in gc.splitlines() if l.startswith("would stop"))
+                if not any(p.endswith(f"_{k}") for k in keep)]
         if idle:
             out.append(f"Docker: {len(idle)} stack(s) running for tasks not using them ({', '.join(idle[:4])}{'...' if len(idle) > 4 else ''}) -> run conductor-docker-gc")
     except Exception:  # noqa: BLE001

@@ -19,7 +19,7 @@ This file is the map. The rules themselves live in `SKILL.md` and `references/`.
 | **Desk** | Where Andrew talks to the system: run `/desk` in any Claude session. It answers read-only questions itself and relays his words to the conductor as `andrew: ...`. The conductor sends its replies, updates and questions there. | `~/.claude/skills/desk/SKILL.md` |
 | **Triage** | `/triage` (or `triage`): Andrew walks his Hermes priority board. Board items become tasks only there, with him. | `~/.claude/skills/triage/` |
 | **Hermes** | Andrew's agent on katz-mini. It sweeps email, Chat, Slack and more into a priority board, which the conductor reads for ordering only. | `references/hermes.md`, `bin/conductor-board` |
-| **Follow-ups** | Things only Andrew can do (reply to someone, a manual step), plus the answer to every investigation. Sent to Telegram and pinned on the dashboard until he says `F<n> done`. | `bin/conductor-followup` |
+| **Follow-ups** | `reply`: a reply he owes to a known email/Chat message, with a draft; sent to Telegram and pinned on the dashboard until he says `F<n> done`. `step` (manual step only he can do) and `answer` (investigation result) are recorded quietly and reported by the morning standup. | `bin/conductor-followup` |
 | **Browser worker** | Does manual web steps in a dedicated, hidden Google Chrome profile. It asks Andrew to sign in when needed, and asks before risky clicks. | `bin/browser-worker`, policy "Manual web steps" |
 | **Comms** | Drafts a reply to every message that needs Andrew. It is in shadow mode (sends nothing) and grades each draft against what he actually sent. One-tap send is built but off until a kind is promoted. | `~/.claude/skills/comms/` (`comms-shadow`, `comms-outbox`, `comms-sendd`); launchd `com.katz.comms-shadow`, `com.katz.comms-sendd` |
 | **Setup session** | An interactive Claude session where Andrew and Claude design and fix this system. It isn't part of the loop. The conductor sends it requests to change rules or scripts. | see "Restarting the setup session" |
@@ -50,4 +50,4 @@ Start `claude` in `~` and say: "You're the setup session for the conductor syste
 
 ## How Andrew wants to be talked to
 
-Times in PST. Terse, plain words, no compliments. Name tasks in words, never by bare id ("the visualizer fix (2202)"). Decide by default and ask only when it truly needs him. Every investigation ends with a follow-up that holds the answer. Counts are exact, never estimates.
+Times in PST. Terse, plain words, no compliments. Name tasks in words, never by bare id ("the visualizer fix (2202)"). Decide by default and ask only when it truly needs him. Every investigation ends with a follow-up that holds the answer (an `answer`, or a `reply` when a known message asked). Counts are exact, never estimates.

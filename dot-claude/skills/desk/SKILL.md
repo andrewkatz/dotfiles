@@ -10,8 +10,12 @@ The conductor is a background session that runs the dev pipeline (`~/.claude/ski
 ## Start
 
 1. Register, so the conductor sends replies, updates and questions here instead of its own window: SendMessage `conductor` with `desk: hello`. If no `conductor` session exists (ListAgents), say so in one line and suggest `conductor` (the start command) or `conductor-restart`.
-2. Brief him in ≤4 short lines from `~/.claude/skills/conductor/bin/conductor-status --json` and `conductor-inbox`: what's waiting on him (questions, follow-ups), anything broken or blocked, what shipped today, and how many tasks are working. The conductor sends any open questions right after `hello`; ask them as they arrive.
+2. Brief him in ≤4 short lines from `~/.claude/skills/conductor/bin/conductor-status --json` and `conductor-inbox`: what's waiting on him (questions, replies to send), anything broken or blocked, what shipped today, and how many tasks are working. The conductor sends any open questions right after `hello`; ask them as they arrive.
 3. Then wait. He can also keep the dashboard open at http://localhost:8710.
+
+## Morning standup
+
+When Andrew runs `/standup` or asks for a morning standup, follow `~/.claude/skills/standup/SKILL.md`: all work recorded yesterday, today's confirmed plan and carryover, and unresolved blockers. Evidence gathering is read-only and can exceed the usual startup briefing's four-line cap. The conductor must wait for today's standup before starting its loop. After delivering the full report, follow the standup skill's completion handshake to release that gate; registering the desk or showing the startup briefing alone never releases it.
 
 ## Answering him yourself (read-only, no forwarding)
 
@@ -34,7 +38,7 @@ HERMES_SESSION_FILE=~/.local/share/conductor/desk-hermes-session ~/.claude/skill
 ```
 - Use `--new` for the first lookup in a desk session, and leave it off for follow-ups ("and what did she say after that?"), which keeps the context. Each call takes about 30 seconds, so tell him you're checking.
 - Combine it with the pipeline when useful: a task's board item names the thread to ask about. Find it in `conductor-ledger get hermes.items`, which is keyed by board headline; the entry whose `local_id` is the task id is the one. Pass that headline to Hermes.
-- Rules: read-only questions only. Never ask Hermes to send, reply or edit, and never guess names (use them exactly as Hermes returns them). Replies he wants drafted follow `/triage`'s "Draft an email reply": text only, shown to him.
+- Rules: read-only questions only. Never ask Hermes to send, reply or edit, and never guess names (use them exactly as Hermes returns them). Replies he wants drafted follow `/triage`'s "Draft an email reply": text only, shown to him. Draft replies yourself from the available thread context; do not forward drafting requests to the conductor. If context is missing, ask for it rather than inventing facts. Every draft you show him also goes to his clipboard, without him asking: pipe only the ready-to-paste reply body (no Markdown fences or commentary) to `pbcopy`, and say "Copied." only after it succeeds. When you show several drafts at once, copy the last one and say which. Never send the email or create a remote draft.
 
 ### Shadow drafts (comms worker, nothing is sent)
 
@@ -67,6 +71,13 @@ Never act on the pipeline yourself: no merging, launching, completing, messaging
 
 ## Forwarding to the conductor
 
+Andrew can override pipeline rules from the desk. Relay explicit instructions,
+including hours, pause, standup and scoped policy changes; do not refuse them
+because the current rule conflicts. The selected conductor applies and audits
+the requested control before work gates. Never infer approval for unrelated
+work. “We can start now” opens today's hours without resetting completed
+standup; wait for the conductor's reply.
+
 Anything that changes what the pipeline does goes to the conductor via SendMessage, as `andrew: <his words, verbatim>`. Add a `context:` line only when his words depend on something in this conversation (a record id, a pasted error). That covers:
 - answers (`Q12: merge it`) and overrides (`D40: use main`)
 - new work to start now ("look into X", "fix Y now"), which the conductor rushes. Work for later you create yourself ("Creating developerly tasks")
@@ -79,7 +90,9 @@ Messages from `conductor` start with one of these:
 - `reply:` the result of something he asked. Relay it in 1-3 lines, in plain words.
 - `update:` something shipped, broke or needs attention. Show it in one line. If it's broken or blocking, lead with that.
 - `ask: Q56,Q57`: questions only he can answer. Read them with `conductor-ledger get questions` and ask with one AskUserQuestion (≤4, blocking first, the queued options with its recommendation first and marked "(Recommended)"). Forward the answers as `andrew: Q56: <choice>` lines in one message.
-- `followup: F<n>`: something he has to do himself. Show the who, what and draft (`conductor-followup list --json`).
+- `followup: F<n>`: a reply he owes to a known message (only replies are announced; steps and answers wait for the standup). Show the who, what and draft (`conductor-followup list --json`), and `pbcopy` the draft body as above. Then ask with AskUserQuestion: "Done" / "Not yet". Done → `conductor-followup done F<n>`. Not yet → leave it open; it stays pinned on the dashboard.
+
+**Never ask him anything in plain text.** Every decision or confirmation he needs to give goes through AskUserQuestion, so it can't scroll past. `reply:` and `update:` are information: relay them, don't turn them into a question. If an update looks like it needs his OK and no `ask:` came with it, don't ask him; forward `andrew: does <task> need my OK for <step>?` to the conductor, which queues a real question if it does.
 
 Never relay worker chatter, routine stage changes or decisions he didn't ask about. If something arrives that doesn't fit the list above, summarize it in one line at most.
 

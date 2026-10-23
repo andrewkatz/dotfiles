@@ -10,9 +10,9 @@ qs = [q for q in ledger.get("questions", []) if q.get("status") == "open"]
 qs.sort(key=lambda q: (not q.get("blocking"), int(q["id"][1:])))
 blocking = sum(1 for q in qs if q.get("blocking"))
 fu = ledger.get("andrew_followups") or {}
-fus = [f for f in (fu.values() if isinstance(fu, dict) else []) if f.get("status") == "open"]
+fus = [f for f in (fu.values() if isinstance(fu, dict) else []) if f.get("status") == "open" and _fu.is_reply(f)]
 if fus:
-    print(f"To do ({len(fus)}) - say \"F<n> done\" in the conductor when done")
+    print(f"Replies to send ({len(fus)}) - say \"F<n> done\" in the conductor when done")
     for f in fus:
         print(f"{f['id']} {task_label(f.get('task')) or '-'}: {f['who'] + ': ' if f.get('who') else ''}{f['what']}")
         if f.get("draft"):

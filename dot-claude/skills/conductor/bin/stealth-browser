@@ -1,0 +1,308 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["patchright==1.64.1"]
+# ///
+"""The browser worker's stealth engine: Andrew's installed Google Chrome, visible but minimized, driven by
+Patchright (a Playwright fork that skips the CDP `Runtime.enable` tell agent-browser leaks), with human-paced
+mouse and keyboard. Same command shape as agent-browser, so browser jobs drive it the same way.
+
+  stealth-browser --profile <dir> open <url>
+  stealth-browser snapshot [-i]              accessibility tree with @eN refs
+  stealth-browser click|dblclick|hover <@eN|selector>
+  stealth-browser click-at <x> <y>           CSS pixels; for checkboxes inside Cloudflare/captcha iframes
+                                             (screenshots are 2x: halve the image coordinates)
+  stealth-browser fill|type <@eN|selector> <text>    clears first (fill) or appends (type), typed key by key
+  stealth-browser press <key>                e.g. Enter, Tab, Meta+A
+  stealth-browser select <@eN|selector> <value>   check|uncheck <@eN|selector>
+  stealth-browser scroll [down|up] [px]      screenshot [path] [--full]
+  stealth-browser get url|title|text [@eN|selector]
+  stealth-browser wait <ms> | wait --text <text> | wait --url <glob>
+  stealth-browser back | reload | tabs | tab <n> | eval [--main] <js>
+  stealth-browser show | hide                un-minimize and focus the window (for Andrew) / minimize again
+  stealth-browser close                      quit Chrome and the server
+
+The first command starts a background server that keeps Chrome open (--profile is needed then)."""
+import json, math, os, random, re, socket, subprocess, sys, time
+from pathlib import Path
+
+HOME = Path.home() / ".local/share/browser-worker"
+SOCK = HOME / "stealth.sock"
+LOG = HOME / "stealth.log"
+CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+SHIFTED = dict(zip('!@#$%^&*()_+{}|:"<>?~', "Digit1 Digit2 Digit3 Digit4 Digit5 Digit6 Digit7 Digit8 Digit9 Digit0 "
+                   "Minus Equal BracketLeft BracketRight Backslash Semicolon Quote Comma Period Slash Backquote".split()))
+
+
+# ---------- client ----------
+
+def request(argv, timeout=120):
+    s = socket.socket(socket.AF_UNIX)
+    s.settimeout(timeout)
+    s.connect(str(SOCK))
+    s.sendall(json.dumps(argv).encode() + b"\n")
+    buf = b""
+    while not buf.endswith(b"\n"):
+        chunk = s.recv(65536)
+        if not chunk:
+            break
+        buf += chunk
+    return json.loads(buf)
+
+
+def alive():
+    try:
+        return request(["ping"], timeout=5)["ok"]
+    except (OSError, ValueError):   # no server, or one shutting down (empty reply)
+        return False
+
+
+def start_server(profile):
+    HOME.mkdir(parents=True, exist_ok=True)
+    SOCK.unlink(missing_ok=True)
+    with open(LOG, "a") as log:
+        subprocess.Popen([sys.executable, __file__, "serve", profile], stdout=log, stderr=log,
+                         stdin=subprocess.DEVNULL, start_new_session=True)
+    for _ in range(60):
+        time.sleep(0.5)
+        if alive():
+            return
+    sys.exit(f"stealth browser didn't start; see {LOG}")
+
+
+def client(argv):
+    profile = None
+    if argv[:1] == ["--profile"]:
+        profile, argv = argv[1], argv[2:]
+    if not argv:
+        sys.exit(__doc__)
+    if not alive():
+        if argv[0] == "close":
+            return print("not running")
+        if not profile:
+            sys.exit("stealth browser isn't running; pass --profile <dir> to start it")
+        start_server(profile)
+    r = request(argv)
+    if argv[0] == "close":   # return only once Chrome has let go of the profile
+        for _ in range(40):
+            if not SOCK.exists():
+                break
+            time.sleep(0.5)
+    if r.get("out"):
+        print(r["out"])
+    if not r["ok"]:
+        sys.exit(1)
+
+
+# ---------- server ----------
+
+class Worker:
+    def __init__(self, profile):
+        from patchright.sync_api import sync_playwright
+        self.pw = sync_playwright().start()
+        self.ctx = self.pw.chromium.launch_persistent_context(
+            user_data_dir=profile, executable_path=CHROME, headless=False, no_viewport=True,
+            args=["--no-first-run", "--no-default-browser-check"])
+        self.page = self.ctx.pages[0] if self.ctx.pages else self.ctx.new_page()
+        self.mouse = (random.uniform(200, 600), random.uniform(150, 400))
+        self.window("minimized")
+
+    # Chrome window state through CDP's Browser domain, which pages can't observe.
+    def window(self, state):
+        cdp = self.ctx.new_cdp_session(self.page)
+        wid = cdp.send("Browser.getWindowForTarget")["windowId"]
+        if state != "normal":
+            cdp.send("Browser.setWindowBounds", {"windowId": wid, "bounds": {"windowState": "normal"}})
+        cdp.send("Browser.setWindowBounds", {"windowId": wid, "bounds": {"windowState": state}})
+        cdp.detach()
+
+    def target(self, spec):
+        spec = spec.lstrip("@")
+        if re.fullmatch(r"(f\d+)?e\d+", spec):   # snapshot refs: e12, or f5e40 inside a frame
+            return self.page.locator(f"aria-ref={spec}")
+        return self.page.locator(spec).first
+
+    # Curved, eased path from the last cursor position to a random point inside the element, the way a
+    # hand moves, instead of CDP's default teleport straight to the center.
+    def move_to(self, loc):
+        loc.scroll_into_view_if_needed(timeout=10000)
+        box = loc.bounding_box(timeout=10000)
+        if not box:
+            raise RuntimeError("element has no box (hidden?)")
+        x = box["x"] + box["width"] * min(max(random.gauss(0.5, 0.15), 0.2), 0.8)
+        y = box["y"] + box["height"] * min(max(random.gauss(0.5, 0.15), 0.25), 0.75)
+        self.move_to_point(x, y)
+
+    def move_to_point(self, x, y):
+        (x0, y0), dist = self.mouse, math.dist(self.mouse, (x, y))
+        cx = (x0 + x) / 2 + random.uniform(-0.3, 0.3) * dist
+        cy = (y0 + y) / 2 + random.uniform(-0.3, 0.3) * dist
+        steps = max(12, min(45, int(dist / 18)))
+        for i in range(1, steps + 1):
+            t = i / steps
+            t = t * t * (3 - 2 * t)
+            px = (1 - t) ** 2 * x0 + 2 * (1 - t) * t * cx + t * t * x
+            py = (1 - t) ** 2 * y0 + 2 * (1 - t) * t * cy + t * t * y
+            self.page.mouse.move(px, py)
+            time.sleep(random.uniform(0.006, 0.018))
+        self.mouse = (x, y)
+        time.sleep(random.uniform(0.08, 0.25))
+
+    def click(self, spec, count=1, point=None):
+        if point:
+            self.move_to_point(*point)
+        else:
+            self.move_to(self.target(spec))
+        for _ in range(count):
+            self.page.mouse.down()
+            time.sleep(random.uniform(0.05, 0.13))
+            self.page.mouse.up()
+            time.sleep(random.uniform(0.06, 0.14))
+
+    # Shifted characters go through a held Shift like on a real keyboard: Playwright's plain type('@') sends
+    # an '@' keydown with no Shift, which behavior checks flag (deviceandbrowserinfo: typeAtWithModifier).
+    def type_text(self, text):
+        kb = self.page.keyboard
+        for ch in text:
+            code = SHIFTED.get(ch) or ("Key" + ch if "A" <= ch <= "Z" else None)
+            if code:
+                kb.down("Shift")
+                time.sleep(random.uniform(0.02, 0.06))
+                kb.press(code)
+                kb.up("Shift")
+            else:
+                kb.type(ch)
+            time.sleep(random.uniform(0.035, 0.11) if len(text) < 200 else 0.008)
+
+    def run(self, cmd, *a):
+        p = self.page
+        if cmd == "ping":
+            return ""
+        if cmd == "open":
+            p.goto(a[0], wait_until="domcontentloaded", timeout=60000)
+            return p.title()
+        if cmd == "snapshot":
+            return f"url: {p.url}\n" + p.aria_snapshot(mode="ai")
+        if cmd in ("click", "dblclick"):
+            self.click(a[0], 2 if cmd == "dblclick" else 1)
+            return "clicked"
+        if cmd == "click-at":   # widgets the snapshot can't see (Cloudflare/captcha iframes); CSS px from top-left
+            self.click(None, point=(float(a[0]) + random.uniform(-2, 2), float(a[1]) + random.uniform(-2, 2)))
+            return "clicked"
+        if cmd == "hover":
+            self.move_to(self.target(a[0]))
+            return "hovered"
+        if cmd in ("fill", "type"):
+            self.click(a[0])
+            if cmd == "fill":
+                p.keyboard.press("Meta+A")
+                p.keyboard.press("Backspace")
+            self.type_text(" ".join(a[1:]))
+            return "typed"
+        if cmd == "press":
+            p.keyboard.press(a[0])
+            return "pressed"
+        if cmd == "select":
+            self.move_to(self.target(a[0]))
+            return str(self.target(a[0]).select_option(a[1]))
+        if cmd in ("check", "uncheck"):
+            loc = self.target(a[0])
+            if loc.is_checked() != (cmd == "check"):
+                self.click(a[0])
+            return cmd + "ed"
+        if cmd == "scroll":
+            sign = -1 if a[:1] == ("up",) else 1
+            left = int(a[1]) if len(a) > 1 else 600
+            while left > 0:
+                step = min(left, random.randint(80, 140))
+                p.mouse.wheel(0, sign * step)
+                left -= step
+                time.sleep(random.uniform(0.02, 0.06))
+            return "scrolled"
+        if cmd == "screenshot":
+            path = next((x for x in a if not x.startswith("--")), None) or f"/tmp/stealth-{int(time.time())}.png"
+            p.screenshot(path=path, full_page="--full" in a)
+            return path
+        if cmd == "get":
+            what = a[0]
+            if what == "url":
+                return p.url
+            if what == "title":
+                return p.title()
+            if what == "text":
+                return self.target(a[1]).inner_text() if len(a) > 1 else p.inner_text("body")
+            raise ValueError(f"get {what}?")
+        if cmd == "wait":
+            if a[0] == "--text":
+                p.get_by_text(" ".join(a[1:])).first.wait_for(timeout=60000)
+            elif a[0] == "--url":
+                p.wait_for_url(a[1], timeout=60000)
+            else:
+                p.wait_for_timeout(int(a[0]))
+            return "ok"
+        if cmd == "back":
+            p.go_back()
+            return p.url
+        if cmd == "reload":
+            p.reload()
+            return p.url
+        if cmd == "tabs":
+            return "\n".join(f"{i}{'*' if pg == p else ' '} {pg.url}" for i, pg in enumerate(self.ctx.pages))
+        if cmd == "tab":
+            self.page = self.ctx.pages[int(a[0])]
+            self.page.bring_to_front()
+            return self.page.url
+        if cmd == "eval":   # isolated world by default (invisible to the page); --main to touch page globals
+            main = a[:1] == ("--main",)
+            return json.dumps(p.evaluate(" ".join(a[main:]), isolated_context=not main))
+        if cmd == "show":
+            self.window("normal")
+            p.bring_to_front()
+            subprocess.run(["osascript", "-e", 'tell application "Google Chrome" to activate'])
+            return "shown"
+        if cmd == "hide":
+            self.window("minimized")
+            return "hidden"
+        raise ValueError(f"unknown command: {cmd}")
+
+    def follow_new_tabs(self):
+        pages = self.ctx.pages
+        if self.page not in pages:
+            self.page = pages[-1] if pages else self.ctx.new_page()
+
+
+def serve(profile):
+    w = Worker(profile)
+    srv = socket.socket(socket.AF_UNIX)
+    srv.bind(str(SOCK))
+    os.chmod(SOCK, 0o600)
+    srv.listen(4)
+    while True:
+        conn, _ = srv.accept()
+        with conn:
+            buf = b""
+            while not buf.endswith(b"\n"):
+                chunk = conn.recv(65536)
+                if not chunk:
+                    break
+                buf += chunk
+            argv = [x for x in json.loads(buf or b'["ping"]') if x != "-i"]
+            if argv[0] == "close":
+                conn.sendall(b'{"ok": true, "out": "closed"}\n')
+                break
+            try:
+                w.follow_new_tabs()
+                r = {"ok": True, "out": w.run(*argv)}
+            except Exception as e:
+                r = {"ok": False, "out": f"error: {type(e).__name__}: {str(e).splitlines()[0] if str(e) else ''}"}
+            conn.sendall(json.dumps(r).encode() + b"\n")
+    w.ctx.close()
+    w.pw.stop()
+    SOCK.unlink(missing_ok=True)
+
+
+if __name__ == "__main__":
+    if sys.argv[1:2] == ["serve"]:
+        serve(sys.argv[2])
+    else:
+        client(sys.argv[1:])

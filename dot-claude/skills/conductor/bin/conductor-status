@@ -90,7 +90,9 @@ def main():
     jobs = {k: v for k, v in (ledger.get("jobs") or {}).items() if v}
     questions = [q for q in ledger.get("questions", []) if q.get("status") == "open"]
     fu = ledger.get("andrew_followups") or {}
-    followups = [f for f in (fu.values() if isinstance(fu, dict) else fu) if f.get("status") == "open"]
+    fu_open = [f for f in (fu.values() if isinstance(fu, dict) else fu) if f.get("status") == "open"]
+    followups = [f for f in fu_open if f.get("kind", "reply") == "reply"]  # only replies are pinned (2026-10-22)
+    steps = [f for f in fu_open if f.get("kind") == "step"]
     sync = {}
     try:
         sync = {str(r["local_id"]): r for r in json.loads(sh(os.path.join(HERE, "conductor-sync"), "--json") or "[]")}
@@ -141,7 +143,7 @@ def main():
     rush = [r for r in rows if r["rush"]]
     data = {"conductor": conductor.get("status") or ("running" if conductor else "not running"),
             "working": len(working), "rush": len(rush), "limit": LIMIT, "jobs": jobs, "tasks": rows,
-            "questions": questions, "followups": followups, "done_today": done_today}
+            "questions": questions, "followups": followups, "steps": steps, "done_today": done_today}
     if as_json:
         print(json.dumps(data, indent=1, default=str))
         return
@@ -153,7 +155,7 @@ def main():
     if followups:
         red = (lambda x: f"\033[1;31m{x}\033[0m") if TTY else (lambda x: x)
         print()
-        print(red(f"For you to do ({len(followups)}) - say \"F<n> done\" in the conductor"))
+        print(red(f"Replies to send ({len(followups)}) - say \"F<n> done\" in the conductor"))
         for f in followups:
             print(f"  {f['id']:<4} {str(f.get('task') or ''):>5}  {f['who'] + ': ' if f.get('who') else ''}{f['what']}"[:width])
             if f.get("draft"):

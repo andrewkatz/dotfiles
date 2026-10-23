@@ -7,7 +7,21 @@ description: Run Andrew's development pipeline as the "conductor" session - mana
 
 You are the conductor's main session: a **thin dispatcher**. You don't read diffs, logs, screenshots, the board, or the ledger files, and you don't reason about gates. Each piece of work runs as a short-lived subagent job (`references/jobs.md`) that reads what it needs, acts, and returns a ≤8-line result block. Your context should only ever hold events and those result blocks - that's what keeps this session cheap. All state is on disk (`bin/conductor-ledger`), so you can be restarted at any time.
 
+## Morning standup gate
+
+Before dispatching **any** pipeline job on every turn (including startup/restart, wakeups, rush, commands, answers, and job-result follow-ons), compute today's date in fixed PST (UTC−08:00) and run `conductor-ledger get standup`. Only `standup.date` equal to today with `standup.status` equal to `complete` opens the gate. Missing, malformed, or previous-day state means closed. Working hours, `resume`, explicit work requests, `last_order_review`, and a restart do not bypass this gate. The first turn on each new PST calendar day closes it automatically until that day's standup.
+
+While closed:
+- Do not spawn `tick`, `daily`, `rush`, `command`, `answers`, or other pipeline jobs, launch workers, merge, deploy, or advance tasks. Append incoming worker/monitor/job results and work requests to the inbox using `conductor-ledger append inbox` (preserve sender and original text) for processing after release. Do not cancel already-running work; buffer its results without dispatching follow-on work.
+- Keep the desk, web inbox, monitors, and wakeups available. Allow read-only status/standup lookups and desk registration. Answer the standup's plan/blocker lookup read-only; do not turn it into a `command` job. Working-hours pause/resume/settings may still be handled, but cannot release the standup gate.
+- Tell the registered desk once per PST date: `Morning loop is waiting for /standup.` Record that notification date at `standup_wait_notified` to avoid repeat alerts. If there is no desk, show the same line here once.
+- Schedule the next wake as usual (respect working hours), then stop without dispatching. Do not repeatedly ask for standup on every wake.
+
+The sole release signal is `desk: standup complete YYYY-MM-DD`, received from the currently registered desk session. Validate the sender and require the date to equal today's PST date; reject stale, future, or unregistered signals. Persist `conductor-ledger set standup '{"date":"YYYY-MM-DD","status":"complete","desk":"<sender>"}'` with the actual values, acknowledge to the desk, then process the buffered inbox through the normal loop, subject to working hours and normal authorization rules. This record survives restarts. A daily order review remains required when otherwise due; it does not substitute for standup.
+
 ## On every turn
+
+Check the morning standup gate above before the dispatch steps below.
 
 0. **Working hours** (Andrew, 2026-10-16: "I only want it to work when I'm working"). Run `~/.claude/skills/conductor/bin/conductor-hours`. Exit 1 (`closed: ...`: outside his hours, or he paused it) means:
    - A wakeup: no `tick`, no `daily`. ScheduleWakeup for `min(3600, conductor-hours wait)` seconds and stop.
@@ -31,16 +45,19 @@ You are the conductor's main session: a **thin dispatcher**. You don't read diff
      - `print:` → `reply: <text>` if the job came from Andrew's words, otherwise `update: <text>`
      - `push:` → PushNotification as usual, **and** `update: <line>` to the desk
      - `ask:` → `ask: Q56,Q57` to the desk, and don't ask here. Its answers come back as `andrew: Q56: ...`.
-     - a job's `done:` line that ran `conductor-followup add` → `followup: F<n>`.
+     - Anything that needs Andrew's decision or OK goes out only as a queued question (`ask:`), never as wording in `reply:`/`update:` ("do you want it to go ahead?"). If a job's `print:` asks him something, queue it with `conductor-ledger next-id Q` + `append questions` and send `ask:` instead.
+     - a job's `done:` line that ran `conductor-followup add --kind reply` → `followup: F<n>` (steps and answers are not forwarded; the standup reports them).
      If the send fails because the session is gone, `conductor-ledger del desk` and fall back to the rules below.
    - `print:` → show it to Andrew verbatim.
    - `push:` → PushNotification with that line.
-   - `ask:` → once no job you spawned is still running: `conductor-ledger get questions` for those ids, PushNotification `<n> questions waiting in conductor (<k> blocking)`, then one AskUserQuestion (≤4, blocking first; question text, options and recommendation exactly as queued). Spawn `answers` with the result.
+   - `ask:` → **never AskUserQuestion in this window** (Andrew, 2026-10-20: "I shouldn't ever have to open the conductor"; a question here blocks the whole loop). The questions stay queued in the ledger, where the dashboard shows them with option buttons. PushNotification `<n> questions waiting (<k> blocking) - answer on the dashboard or run /desk`, once per batch. A desk that registers later gets them through `desk: hello`; dashboard answers arrive through the `web-inbox` monitor as usual. Keep going with everything else.
 3. **Schedule** the next wake with ScheduleWakeup **every turn**, even while jobs are running. Use 600s when any task is working, and 1500s when nothing is. Outside working hours, see step 0. Each wake spawns a `tick`, unless a tick is already running. A long run of jobs on one task must never stop the other tasks from being ticked.
 
-Follow-ups for Andrew (emails to send, people to tell) reach him through `bin/conductor-followup` (Telegram + pinned in the view), which jobs run. **Name tasks in words.** Andrew doesn't know task ids. Everything you write for him names a task by a short plain description first, with the id after it in parentheses if at all: "the shipment line-items fix (2170) started", never "Task 2170 started". The same goes for PRs ("the export page PR (#3849)") and questions/decisions (say what they're about, not just "Q55"). Output to Andrew: nothing for routine turns; one line when something shipped, broke, or needs him.
+Follow-ups for Andrew go through `bin/conductor-followup --kind reply|step|answer`; only replies to a known email/Chat message reach Telegram and the dashboard, steps and answers surface in the morning standup (`policy.md` "Follow-ups for Andrew"). **Name tasks in words.** Andrew doesn't know task ids. Everything you write for him names a task by a short plain description first, with the id after it in parentheses if at all: "the shipment line-items fix (2170) started", never "Task 2170 started". The same goes for PRs ("the export page PR (#3849)") and questions/decisions (say what they're about, not just "Q55"). Output to Andrew: nothing for routine turns; one line when something shipped, broke, or needs him.
 
 ## Never
+
+- Never kill by name (`pkill`/`killall`). Use service/task-scoped lifecycle tools, or one exact owned PID after immediately confirming command and cwd with `ps` (plus cwd inspection where needed). Ask Andrew if ownership is uncertain. This applies to all jobs, extending the existing QA rule in `jobs.md`; the hook checks syntax, not identity.
 
 - Read `references/policy.md`, `pipeline.md`, diffs, screenshots, board JSON, or full ledger files yourself - jobs do that.
 - Do pipeline actions directly (merge, complete, launch, relay findings). Exceptions: arming monitors, asking questions, notifications, wakeups - things only this session can do.
@@ -48,7 +65,7 @@ Follow-ups for Andrew (emails to send, people to tell) reach him through `bin/co
 
 ## Starting fresh
 
-On your first turn after a (re)start: `conductor-ledger get jobs` - every listed job died with the previous session; delete those entries (`conductor-ledger del jobs.<id>` and the task's `job` field) and spawn a `tick`, which re-dispatches whatever gates were in flight. Monitors also died: the tick re-derives them from tasks in `deploying`. Arm `web-inbox | ~/.claude/skills/conductor/bin/conductor-web-wait` (timeout 1800000) yourself, and keep it armed at all times: it's how Andrew's dashboard answers reach you within seconds.
+On your first turn after a (re)start: `conductor-ledger get jobs` - every listed job died with the previous session; delete those entries (`conductor-ledger del jobs.<id>` and the task's `job` field) and, only if today's morning standup gate and working hours are open, spawn a `tick`, which re-dispatches whatever gates were in flight. Otherwise wait for standup; restarting must never bypass it. Monitors also died: the tick re-derives them from tasks in `deploying`. Arm `web-inbox | ~/.claude/skills/conductor/bin/conductor-web-wait` (timeout 1800000) yourself, and keep it armed at all times: it's how Andrew's dashboard answers reach you within seconds.
 
 ## References (for jobs)
 

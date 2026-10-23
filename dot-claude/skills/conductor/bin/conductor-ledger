@@ -4,6 +4,7 @@
   conductor-ledger get [PATH]            print JSON at PATH (default: hot summary, see below)
   conductor-ledger set PATH JSON         replace value at PATH
   conductor-ledger merge PATH JSON       shallow-merge a JSON object into PATH (creates it)
+  conductor-ledger merge-id PATH ID EXPECT PATCH  merge one stable list ID, checking EXPECT under lock
   conductor-ledger append PATH JSON      append to the list at PATH (creates it)
   conductor-ledger del PATH              delete PATH
   conductor-ledger take PATH             print JSON at PATH and delete it, atomically ([] / {} if missing)
@@ -89,6 +90,42 @@ def summary():
             "overrides": led.get("overrides", {}), "last_order_review": led.get("last_order_review")}
 
 
+STOP = set("about after again also before being could does from have into just more once only other over same should "
+           "some than that their them then there these they this those what when where which will with would your".split())
+
+
+def words(text):
+    return {w for w in re.findall(r"[a-z0-9*:]+", (text or "").lower()) if len(w) > 3 and w not in STOP}
+
+
+def overlaps(q, new):
+    """Same task, or two proposals whose titles share most of their words."""
+    if new.get("task") is not None and str(q.get("task")) == str(new.get("task")):
+        return True
+    a, b = words((q.get("proposal") or {}).get("title")), words((new.get("proposal") or {}).get("title"))
+    return bool(a and b) and len(a & b) / min(len(a), len(b)) >= 0.6
+
+
+def check_duplicate_question(qs, new):
+    """Andrew, 2026-10-22: the conductor kept queuing near-duplicate questions. A new open question must say how it
+    relates to every open question on the same task (or a proposal with a similar title): `replaces` withdraws them
+    in favour of this one, `distinct_from` confirms they need separate answers."""
+    if new.get("status", "open") != "open":
+        return
+    replaces, distinct = set(new.get("replaces") or []), set(new.get("distinct_from") or [])
+    hits = [q for q in qs if q.get("status") == "open" and overlaps(q, new) and q.get("id") not in replaces | distinct]
+    if hits:
+        lines = "\n".join(f"  {q['id']} (task {q.get('task')}): {q.get('question', '')[:200]}" for q in hits)
+        sys.exit(f"refused: open questions that may already cover this:\n{lines}\n"
+                 "Prefer one question: update the existing one in place (`merge-id questions Q<n> EXPECT PATCH` with the "
+                 "new question/options and asked_at null, then `ask: Q<n>` again), or fold the old one into this entry "
+                 "with \"replaces\": [\"Q<n>\"] (it gets withdrawn). Only if each needs its own answer, add "
+                 "\"distinct_from\": [\"Q<n>\"].")
+    for q in qs:
+        if q.get("id") in replaces and q.get("status") == "open":
+            q.update(status="withdrawn", answer=f"replaced by {new.get('id')}")
+
+
 def main():
     a = sys.argv[1:]
     if not a or a[0] == "summary":
@@ -97,8 +134,12 @@ def main():
     cmd = a[0]
     with locked():
         if cmd == "log":
-            entry = {"ts": datetime.datetime.now().isoformat(timespec="seconds"), "task": a[1], "action": a[2],
-                     "detail": a[3] if len(a) > 3 else ""}
+            # TASK ACTION [DETAIL...]; a bare `log "message"` is logged with task "-" instead of crashing
+            if len(a) < 2:
+                sys.exit("usage: conductor-ledger log TASK ACTION [DETAIL]")
+            task, action, rest = (a[1], a[2], a[3:]) if len(a) > 2 else ("-", a[1], [])
+            entry = {"ts": datetime.datetime.now().isoformat(timespec="seconds"), "task": task, "action": action,
+                     "detail": " ".join(rest)}
             with open(os.path.join(DIR, "ledger.log"), "a") as fh:
                 fh.write(json.dumps(entry) + "\n")
             return
@@ -136,6 +177,25 @@ def main():
         if cmd == "get":
             print(json.dumps(walk(doc, keys), indent=1))
             return
+        if cmd == "merge-id":
+            if len(a) != 5:
+                sys.exit("usage: conductor-ledger merge-id PATH ID EXPECT_JSON PATCH_JSON")
+            values = walk(doc, keys)
+            expected, patch = json.loads(a[3]), json.loads(a[4])
+            if not isinstance(values, list) or not isinstance(expected, dict) or not isinstance(patch, dict):
+                sys.exit("refused: merge-id requires a list and object expectation/patch")
+            matches = [v for v in values if isinstance(v, dict) and v.get("id") == a[2]]
+            if len(matches) != 1:
+                sys.exit("refused: stable ID must match exactly one entry")
+            entry = matches[0]
+            if any(entry.get(k) != v for k, v in expected.items()):
+                sys.exit("refused: stable ID entry changed; reread before reconciling")
+            if "id" in patch and patch["id"] != a[2]:
+                sys.exit("refused: cannot change stable ID")
+            entry.update(patch)
+            save_doc(f, path, doc)
+            print("ok")
+            return
         parent = walk(doc, keys[:-1], create=True)
         if isinstance(parent, list) and not keys[-1].lstrip("-").isdigit():
             sys.exit(f"refused: {'.'.join(keys[:-1])} is a list; add with `append {'.'.join(keys[:-1])} JSON` (index entries by number)")
@@ -161,7 +221,10 @@ def main():
         elif cmd == "merge":
             parent.setdefault(keys[-1], {}).update(json.loads(a[2]))
         elif cmd == "append":
-            parent.setdefault(keys[-1], []).append(json.loads(a[2]))
+            new = json.loads(a[2])
+            if path == "questions":
+                check_duplicate_question(parent.get("questions", []), new)
+            parent.setdefault(keys[-1], []).append(new)
         elif cmd == "del":
             parent.pop(keys[-1], None)
         else:

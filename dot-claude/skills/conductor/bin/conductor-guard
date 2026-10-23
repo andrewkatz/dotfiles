@@ -9,6 +9,8 @@ Exit 2 blocks the tool call and shows stderr to the model.
 """
 import json, os, re, subprocess, sys
 
+from process_guard import MESSAGE, unsafe_process_command
+
 HERE = os.path.dirname(os.path.realpath(__file__))
 
 try:
@@ -26,6 +28,9 @@ def closed(kind):
     r = subprocess.run([os.path.join(HERE, "conductor-hours"), *([kind] if kind else [])], capture_output=True, text=True)
     return r.stdout.strip() if r.returncode else None
 
+
+if unsafe_process_command(cmd):
+    block(MESSAGE)
 
 if re.search(r"\bdeveloperly\b[^|;&\n]*\b(work-items|tasks)\s+create\b", cmd):
     block("refused: the conductor never creates tasks on its own (Andrew, 2026-10-16). Propose it instead: "

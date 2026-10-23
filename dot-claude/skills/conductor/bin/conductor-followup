@@ -1,10 +1,19 @@
 #!/usr/bin/env python3
-"""Things Andrew has to do himself after a task (email a client, tell someone it shipped).
-Each one is sent to his phone (Telegram, @katz_hermes_bot) and stays pinned in red in the
-conductor view until he clears it.
+"""Things Andrew has to do himself after a task. Three kinds (Andrew, 2026-10-22: the daily
+standup now carries notices, so only replies he has to send are follow-ups):
 
-  conductor-followup add --task N --who "Tiffany (Acme)" --what "Tell her the export fix is live" [--draft FILE]
-  conductor-followup list [--json]       open follow-ups
+  reply   a reply to a known message (an email or Chat/Slack thread someone sent). Needs --source,
+          --who and --draft. Sent to his phone (Telegram, @katz_hermes_bot) and pinned in red in
+          the conductor view until he clears it.
+  step    a manual step only he can do (make a token, sign in, sign off a sheet). Recorded, not
+          sent or pinned; the standup lists open steps under Blockers until he clears them.
+  answer  an investigation result with nobody waiting on a reply. Recorded as already read
+          (status "noted"); the standup reports it.
+
+  conductor-followup add --kind reply --task N --source "email from Tiffany, 'Export broken' 10/21" \
+      --who "Tiffany (Acme)" --what "Reply by email: the export fix is live" --draft FILE
+  conductor-followup add --kind step|answer --task N --what "..."
+  conductor-followup list [--json] [--all]   open replies (--all adds open steps)
   conductor-followup done F3 [F4 ...]    clear them (Andrew said he did it, or "F3 done")
   conductor-followup remind              re-send open follow-ups not sent in the last 20h (daily job)
   conductor-followup test                send a test message
@@ -61,6 +70,10 @@ def ledger(*args):
     return r.stdout.strip()
 
 
+def is_reply(f):
+    return f.get("kind", "reply") == "reply"
+
+
 def followups():
     try:
         return list(json.loads(ledger("get", "andrew_followups")).values())
@@ -82,6 +95,8 @@ def telegram(text):
 def message(f, again=False):
     head = f"{'Reminder - ' if again else ''}Conductor follow-up {f['id']}" + (f" - {task_label(f['task'])}" if f.get("task") else "")
     lines = [head, f"{f['who']}: {f['what']}" if f.get("who") else f["what"]]
+    if f.get("source"):
+        lines.append(f"Replying to: {f['source']}")
     if f.get("draft"):
         lines += ["", "Draft:", f["draft"]]
     lines += ["", f'Clear it: tell the conductor "{f["id"]} done".']
@@ -96,12 +111,15 @@ def main():
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
     a = sub.add_parser("add")
+    a.add_argument("--kind", required=True, choices=["reply", "step", "answer"])
+    a.add_argument("--source", default="", help="reply only: the message being answered (channel, sender, subject/thread, date)")
     a.add_argument("--task")
     a.add_argument("--who", default="")
     a.add_argument("--what", required=True)
     a.add_argument("--draft")
     l = sub.add_parser("list")
     l.add_argument("--json", action="store_true")
+    l.add_argument("--all", action="store_true")
     d = sub.add_parser("done")
     d.add_argument("ids", nargs="+")
     sub.add_parser("remind")
@@ -116,21 +134,26 @@ def main():
         if re.search(r"/triage|\b(new|create|file|open)( a| \w+)? tasks?\b|\bpaste into\b", o.what, re.I):
             sys.exit("refused: that's task work - create it yourself with `developerly work-items create` "
                      "(policy.md \"Create\"); follow-ups are only for things Andrew must do personally")
-        f = {"id": ledger("next-id", "F"), "task": o.task, "who": o.who, "what": o.what,
-             "draft": open(o.draft).read().strip() if o.draft else "", "status": "open", "created": now(), "sent": None}
-        ok = telegram(message(f))
+        if o.kind == "reply" and not (o.source.strip() and o.who.strip() and o.draft):
+            sys.exit("refused: a reply needs --source (the email/Chat message it answers), --who and --draft. "
+                     "Unknown source = no reply follow-up: use --kind answer (a result) or --kind step (a manual step)")
+        f = {"id": ledger("next-id", "F"), "kind": o.kind, "task": o.task, "who": o.who, "what": o.what,
+             "source": o.source.strip(), "draft": open(o.draft).read().strip() if o.draft else "",
+             "status": "noted" if o.kind == "answer" else "open", "created": now(), "sent": None}
+        ok = o.kind == "reply" and telegram(message(f))
         f["sent"] = now() if ok else None
         ledger("set", f"andrew_followups.{f['id']}", json.dumps(f))
-        ledger("log", str(o.task or "-"), "followup", f"{f['id']} {o.who}: {o.what}")
-        print(f"{f['id']} {'sent to telegram' if ok else 'recorded; telegram FAILED (remind retries)'}")
+        ledger("log", str(o.task or "-"), "followup", f"{f['id']} [{o.kind}] {o.who}: {o.what}")
+        print(f"{f['id']} " + ({"step": "recorded (standup lists it under Blockers)", "answer": "recorded (standup reports it)"}.get(o.kind)
+                               or ("sent to telegram" if ok else "recorded; telegram FAILED (remind retries)")))
         return
     fs = followups()
     if o.cmd == "list":
-        open_ = [f for f in fs if f.get("status") == "open"]
+        open_ = [f for f in fs if f.get("status") == "open" and (o.all or is_reply(f))]
         if o.json:
             print(json.dumps(open_, indent=1))
         for f in [] if o.json else open_:
-            print(f"{f['id']} {task_label(f.get('task')) or '-'}  {f['who'] + ': ' if f.get('who') else ''}{f['what']}")
+            print(f"{f['id']} {'' if is_reply(f) else '[' + f['kind'] + '] '}{task_label(f.get('task')) or '-'}  {f['who'] + ': ' if f.get('who') else ''}{f['what']}")
         return
     if o.cmd == "done":
         want = {i.upper() for i in o.ids}
@@ -143,7 +166,7 @@ def main():
         cutoff = datetime.datetime.now() - datetime.timedelta(hours=20)
         n = 0
         for f in fs:
-            if f.get("status") != "open":
+            if f.get("status") != "open" or not is_reply(f):
                 continue
             last = f.get("sent")
             if last and datetime.datetime.fromisoformat(last) > cutoff:
