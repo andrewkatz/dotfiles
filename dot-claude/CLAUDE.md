@@ -56,3 +56,5 @@ If a file was Read earlier in the session and hasn't been edited since, don't Re
 # Batching
 
 When multiple Bash or Read calls are independent (no value from call N feeds call N+1), issue them in a single turn (one assistant message with multiple tool_use blocks), not sequentially.
+
+@RTK.md
