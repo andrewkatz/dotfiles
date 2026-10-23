@@ -15,6 +15,7 @@ dot-claude/*
 !dot-claude/CLAUDE.md
 !dot-claude/settings.json
 !dot-claude/keybindings.json
+!dot-claude/RTK.md
 !dot-claude/commands
 dot-claude/commands/*
 !dot-claude/commands/*.md
@@ -24,6 +25,12 @@ dot-claude/commands/*
 dot-claude/skills/*
 !dot-claude/skills/*/
 !dot-claude/skills/*/SKILL.md
+# private or generated: conductor screenshots/attachments, org-synced skills, impeccable hook cache
+dot-claude/skills/synced/
+dot-claude/skills/conductor/evidence/
+dot-claude/skills/conductor/state/
+dot-claude/skills/conductor/bin/*.png
+dot-claude/skills/impeccable/scripts/.impeccable/
 
 # dot-pi: only track these (no caches/auth/sessions)
 dot-pi/*
