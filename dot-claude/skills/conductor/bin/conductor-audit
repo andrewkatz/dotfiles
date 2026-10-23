@@ -7,7 +7,8 @@
 
 Checks: green PRs left unmerged, idle workers in a working stage, failed launches, waiting tasks whose
 condition already happened, investigations left open, free slots with todo work, ledger/developerly drift,
-stale job entries, malformed ledger keys, approved proposals never created, Docker stacks left running for tasks past testing.
+stale job entries, malformed ledger keys, approved proposals never created, Docker stacks left running for tasks past testing,
+VIA beta/production /up down or slow.
 """
 import datetime, json, os, re, subprocess, sys, time
 
@@ -19,6 +20,8 @@ PAUSED_PROJECTS = {"Inn Management"}
 WORKING = {"spec", "implementing", "testing", "qa", "review", "shipping"}
 WAITING = {"waiting", "escalated", "blocked", "parked"}
 IDLE_MIN, LAUNCH_MIN, GREEN_MIN, JOB_HOURS = 15, 10, 10, 3
+HEALTH = ["https://beta.via.tools/up", "https://app.via.tools/up"]
+SLOW_SECS = 5
 
 
 def ts(s):
@@ -165,6 +168,20 @@ def main():
             out.append(f"Docker: {nets} networks (launches fail at ~30) -> run conductor-docker-gc")
     except Exception:  # noqa: BLE001
         pass
+
+    # Beta was down 24 min on 2026-10-23 before anyone noticed: live checks only curl /up per task.
+    # Every audit (each tick, and every 5 min via conductor-web-wait) checks the shared hosts.
+    for url in HEALTH:
+        try:
+            r = subprocess.run(["curl", "-sS", "-o", "/dev/null", "-w", "%{http_code} %{time_total}", "-m", "15", url],
+                               capture_output=True, text=True, timeout=20)
+            code, secs = (r.stdout.split() + ["000", "15"])[:2]
+            if code != "200":
+                out.append(f"{url} returned {code} -> INCIDENT: policy.md Incidents, before any other step")
+            elif float(secs) > SLOW_SECS:
+                out.append(f"{url} slow (over {SLOW_SECS}s) -> INCIDENT: policy.md Incidents, check host load first")
+        except Exception:  # noqa: BLE001
+            out.append(f"{url} unreachable -> INCIDENT: policy.md Incidents, before any other step")
 
     if "--new" in sys.argv:
         seen = {}

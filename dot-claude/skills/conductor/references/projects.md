@@ -35,6 +35,7 @@
   - VIA MCP: `job_failures` for the window since deploy; compare against the hour before the deploy.
   - Sentry: `~/.claude/skills/conductor/bin/conductor-sentry new-since <deploy finish time>` (via + via-javascript; token in `~/.config/sentry-to-developerly.env`, read by the script only).
   - Read-only production inspection when needed: the repo's `production-troubleshoot` skill.
+- **Never automate:** any `kamal` command from this machine that boots, restarts, deploys or pushes env to beta or production (`app boot`, `app restart`, `deploy`, `redeploy`, `rollback`, `env push`). The local env lacks the CI secrets, so these re-upload the host env files with empty values. On 2026-10-23 two `kamal app boot` attempts left beta's `DATABASE_URL` empty until the next CI deploy, and one container restart away from a full outage. Read-only `kamal app logs` / `details` is fine. To recover, revert the merge on `beta` and let `deploy.yml` ship it.
 
 ## Inn Management (`~/Work/inn-management`, GitHub `getcomfortly/inn_management`)
 

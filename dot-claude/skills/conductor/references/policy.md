@@ -63,6 +63,8 @@ For these:
 - Run a second, independent opus review focused on that risk. For dependencies, also check maintenance, license and the changelog for breaking changes.
 - Resolve every "uncertain" by gathering more evidence (re-run QA, read the code, test locally).
 - For a large diff, prefer splitting it into smaller PRs. Merge to `beta` first wherever the project has one.
+- **Infra applies: trace the blast radius, not just the plan** (2026-10-23 beta outage: enabling Inspector back-scanned 5,654 ECR images and SNS delivered 53,593 findings to beta's webhook in ~15 min). For any apply that turns on or widens an event source (Inspector, GuardDuty, Config, Security Hub, CloudTrail, EventBridge rules, CloudWatch alarms), the infra-risk review lists every downstream consumer (EventBridge rule → SNS topic → each subscription's endpoint, `aws sns list-subscriptions-by-topic`) and estimates the first-run volume (a first scan covers everything that already exists). If an app endpoint is a subscriber, set `throttlePolicy.maxReceivesPerSecond` on that subscription, or pause it with a filter policy and record the restore, **before** the apply. No volume estimate → the review isn't done.
+- **One infra apply at a time, then a quiet window.** After an apply that touches anything feeding a VIA host (event sources, SNS, Redis, launch templates, security groups), watch `/up` for 15 min before the next apply or the next merge to that host's branch. Stacked changes (four applies and three beta merges in 25 min on 2026-10-23) make the cause unreadable when something breaks.
 
 **Only these escalate to Andrew** (the "Never automate" lists in `projects.md` also apply):
 - Backfills or one-off scripts that write production data. Schema migrations follow "Migrations" and don't escalate.
@@ -70,6 +72,15 @@ For these:
 - Adding or rotating secrets/credentials, or anything needing access only he has.
 - Payment or billing changes going to **production** (VIA `main`, Inn Management, CORE). Merging them to VIA `beta` is fine after extra scrutiny.
 - A second-review finding about auth or billing that you can't resolve.
+
+## Incidents (a VIA host down or slow)
+
+`conductor-audit` prints `INCIDENT` when beta or production `/up` fails or takes over 5s. An incident pre-empts everything: stop new merges, applies and launches to that host's branch until it's resolved.
+
+1. **Check the host before the code.** Load, container CPU, the kamal-proxy log (who is sending the traffic and to which path), and what changed in the last hour across *all* tasks: deploys **and** infra applies (`ledger.log`). Slow boots and failed health checks during load are symptoms; never conclude that a code change caused one, or recommend re-running a deploy, until host load is normal.
+2. **Mitigate under standing authority** (Andrew, 2026-10-23: "get beta back up fast"). No question is needed for a mitigation that is reversible, narrowly scoped and recorded: pausing one SNS subscription or EventBridge rule **by topic or rule** (never every subscription to an endpoint: on 2026-10-23 that muted 14 production alarm subscriptions for 6 minutes), stopping a runaway job, reverting the merge that caused it (the CI deploy ships the revert). Before acting, save the original config to `~/.local/share/conductor/incidents/<date>-<slug>/`. Record a `D<n>` naming what changed, the restore command and the restore condition. Anything else (deleting data, secrets, production schema, a kamal command from this machine) is still a blocking question.
+3. **PushNotification** at detection and at recovery.
+4. **Root cause and follow-through:** an `answer` follow-up with a timeline in PST; a proposal for the fix; and every paused or changed resource listed in that fix's acceptance criteria, by ARN or name, so nothing stays paused once the fix ships. Re-check the premise of any proposal queued *during* the incident against the real cause, and withdraw or rescope it.
 
 ## Migrations
 
