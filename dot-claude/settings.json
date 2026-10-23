@@ -1,13 +1,12 @@
 {
   "permissions": {
-    "defaultMode": "plan",
+    "defaultMode": "bypassPermissions",
     "disableAutoMode": "disable",
     "additionalDirectories": [
       "~/.local/share/mise",
       "~/.cache"
     ]
   },
-  "model": "claude-fable-5[1m]",
   "hooks": {
     "Elicitation": [
       {
@@ -149,6 +148,15 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/developerly-status.sh pre_tool_use"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rtk hook claude"
           }
         ]
       }
@@ -297,10 +305,19 @@
       }
     }
   },
-  "effortLevel": "xhigh",
+  "sandbox": {
+    "enabled": false
+  },
+  "effortLevel": "low",
+  "modelSettings": {
+    "claude-fable-5-1": {
+      "effortLevel": "low"
+    }
+  },
   "showThinkingSummaries": true,
   "skipDangerousModePermissionPrompt": true,
+  "remoteControlAtStartup": false,
   "inputNeededNotifEnabled": true,
   "agentPushNotifEnabled": true,
-  "effort": "xhigh"
+  "effort": "low"
 }
