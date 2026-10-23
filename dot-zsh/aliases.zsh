@@ -207,7 +207,7 @@ ed() {
 
 # AI
 alias crush='crush --yolo'
-alias c="claude --model 'fable' --dangerously-skip-permissions"
+alias c="claude --dangerously-skip-permissions"
 alias cx="claude --allow-dangerously-skip-permissions --permission-mode plan --model 'opus'"
 alias g='goose'
 alias gr='goose session -r'

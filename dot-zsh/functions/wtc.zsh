@@ -52,9 +52,9 @@ function wtc() {
 
   local -a claude_flags
   if [ "$use_plan" = true ]; then
-    claude_flags=(--allow-dangerously-skip-permissions --permission-mode plan --effort max --model 'opus')
+    claude_flags=(--allow-dangerously-skip-permissions --permission-mode plan --model 'fable')
   else
-    claude_flags=(--dangerously-skip-permissions --effort max --model 'opus')
+    claude_flags=(--dangerously-skip-permissions --model 'fable')
   fi
 
   if [ "$use_tmux" = true ]; then

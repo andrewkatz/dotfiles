@@ -1,6 +1,6 @@
 status_poll_ms = 750
 pr_poll_ms = 20000
-launcher_kind = "pi"
+launcher_kind = "claude"
 launcher_command = ""
 default_planning_mode = false
 theme = "carbon-fox"

@@ -95,10 +95,3 @@
   default_branch = "main"
   developerly_project_id = 0
   sentry_limit = 0
-
-[[projects]]
-  name = "Starfall"
-  repo = "/Users/andrewkatz/Work/starfall"
-  default_branch = "main"
-  developerly_project_id = 0
-  sentry_limit = 0
