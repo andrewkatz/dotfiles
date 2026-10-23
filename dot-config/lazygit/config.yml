@@ -24,8 +24,8 @@ gui:
       - '#f2f4f8'
     searchingActiveBorderColor:
       - '#56bab9'
-  authorColors:
-    '*': '#b897f8'
+    authorColors:
+      '*': '#b897f8'
 customCommands:
   - key: "<c-n>"
     command: "git push --no-verify"
