@@ -208,9 +208,12 @@ export default function askUserQuestion(pi: ExtensionAPI) {
 
     renderResult(toolResult, _options, theme, _context) {
       const details = toolResult.details as AskUserQuestionDetails | undefined;
-      if (!details) {
+      if (!details || (details.answer !== null && typeof details.answer !== "string")) {
+        // Permission guards and other tool errors need not have answer details.
+        // Never render a blocked prompt as a successful "undefined" answer.
         const first = toolResult.content[0];
-        return new Text(first?.type === "text" ? first.text : "", 0, 0);
+        const text = first?.type === "text" ? first.text : "No answer received";
+        return new Text(theme.fg(toolResult.isError ? "error" : "muted", text), 0, 0);
       }
 
       if (details.cancelled || details.answer === null) {

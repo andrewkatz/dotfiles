@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
 
-const DEFAULT_MODEL = "openai-codex/gpt-5.3-codex-spark";
+const DEFAULT_MODEL = "openai-codex/gpt-6.1-sol";
 const DEFAULT_TOOLS = "read,grep,find,ls";
 const DEFAULT_TIMEOUT_SECONDS = 300;
 const DEFAULT_MAX_OUTPUT_CHARS = 12_000;

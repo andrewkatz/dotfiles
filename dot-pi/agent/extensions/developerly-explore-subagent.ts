@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
 
-const CODEX_EXPLORE_MODEL = "openai-codex/gpt-5.3-codex-spark";
+const CODEX_EXPLORE_MODEL = "openai-codex/gpt-6.1-sol";
 const FALLBACK_MODEL = CODEX_EXPLORE_MODEL;
 const READ_ONLY_TOOLS = "read,grep,find,ls";
 const MAX_OUTPUT_CHARS = 8_000;

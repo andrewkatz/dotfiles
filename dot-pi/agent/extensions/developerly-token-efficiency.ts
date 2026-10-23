@@ -226,7 +226,7 @@ export default function (pi: ExtensionAPI) {
     const allMessages = [...preparation.messagesToSummarize, ...preparation.turnPrefixMessages];
     if (allMessages.length === 0) return;
 
-    const model = ctx.modelRegistry.find("openai-codex", "gpt-5.3-codex-spark")
+    const model = ctx.modelRegistry.find("openai-codex", "gpt-6.1-sol")
       ?? ctx.modelRegistry.find("google", "gemini-2.5-flash");
     if (!model) return;
 
