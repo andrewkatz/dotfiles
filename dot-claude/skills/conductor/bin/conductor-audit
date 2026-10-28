@@ -2,6 +2,7 @@
 """Find work the conductor dropped: things that should be moving and aren't.
 
   conductor-audit            one line per problem, with the fix (the tick runs this first and handles every line)
+  conductor-audit --no-gh    skip the per-PR GitHub checks (PR status is cached 10 min per PR + head SHA anyway)
   conductor-audit --new      only problems not reported in the last 30 min (conductor-web-wait uses this to wake
                              the dispatcher without nagging about the same thing every 5 minutes)
 
@@ -46,7 +47,41 @@ def sync(*args):
     return json.loads(r.stdout or "[]")
 
 
+CACHE = os.path.join(DIR, "cache", "pr-status")
+CACHE_TTL = 600  # 10 min; keyed by PR number + head SHA, so a new push invalidates it
+
+
+def head_sha(cwd):
+    try:
+        return subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=10,
+                              cwd=cwd).stdout.strip() or "nosha"
+    except Exception:  # noqa: BLE001
+        return "nosha"
+
+
 def pr_green(pr, cwd):
+    if "--no-gh" in sys.argv:  # conductor-web-wait: GitHub checks only every 15 min (REST rate limit)
+        return False
+    cwd = cwd if cwd and os.path.isdir(cwd) else None
+    path = os.path.join(CACHE, f"{pr}-{head_sha(cwd) if cwd else 'nosha'}.json")
+    try:
+        if time.time() - os.path.getmtime(path) < CACHE_TTL:
+            return json.load(open(path))["green"]
+    except Exception:  # noqa: BLE001
+        pass
+    green = _pr_green(pr, cwd)
+    try:
+        os.makedirs(CACHE, exist_ok=True)
+        for old in os.listdir(CACHE):
+            if old.startswith(f"{pr}-"):
+                os.remove(os.path.join(CACHE, old))
+        json.dump({"green": green}, open(path, "w"))
+    except OSError:
+        pass
+    return green
+
+
+def _pr_green(pr, cwd):
     try:
         r = subprocess.run(["gh", "pr", "view", str(pr), "--json", "state,mergeable,statusCheckRollup"],
                            capture_output=True, text=True, timeout=60, cwd=cwd if cwd and os.path.isdir(cwd) else None)

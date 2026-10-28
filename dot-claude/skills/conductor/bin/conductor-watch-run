@@ -17,5 +17,5 @@ while :; do
     echo "$label run $id still $status after ${elapsed}s"
     exit 0
   fi
-  sleep 30
+  sleep 60  # GitHub REST rate limit (Q578)
 done

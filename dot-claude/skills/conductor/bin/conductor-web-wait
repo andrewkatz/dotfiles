@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # Monitor command for the dispatcher: block until Andrew sends something from the web dashboard
 # (ledger.web_queue), print ONE line with all of it, and exit. Prints "still waiting" after 25 min (re-arm).
-# Every 5 min during working hours it also runs conductor-audit --new; new problems print as one `audit: ... ⏎ ...` line.
+# Every 5 min during working hours it also runs conductor-audit --new (its per-PR GitHub checks at most every 15 min); new problems print as one `audit: ... ⏎ ...` line.
 #   web: Q50: Done - merge when gates pass ⏎ Q54: Close 2134 as cannot-reproduce
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 Q="$HOME/.local/share/conductor/ledger.json"
 for i in $(seq 750); do
   if (( i % 150 == 0 )) && "$HERE/conductor-hours" >/dev/null 2>&1; then  # no audits outside working hours
-    found=$("$HERE/conductor-audit" --new 2>/dev/null | paste -sd'\n' - | sed 's/$/ ⏎ /' | tr -d '\n' | sed 's/ ⏎ $//')
+    # per-PR GitHub checks at most every 15 min (REST rate limit, Q578); other audit lines stay on 5 min
+    stamp="$HOME/.local/share/conductor/cache/audit-gh.stamp"; gh_flag=--no-gh
+    if [[ ! -e $stamp || -n $(find "$stamp" -mmin +14 2>/dev/null) ]]; then mkdir -p "${stamp%/*}"; touch "$stamp"; gh_flag=; fi
+    found=$("$HERE/conductor-audit" --new $gh_flag 2>/dev/null | paste -sd'\n' - | sed 's/$/ ⏎ /' | tr -d '\n' | sed 's/ ⏎ $//')
     [[ -n $found ]] && { echo "audit: $found"; exit 0; }
   fi
   if python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("web_queue") else 1)' "$Q" 2>/dev/null; then
