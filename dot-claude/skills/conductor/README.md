@@ -35,7 +35,7 @@ This file is the map. The rules themselves live in `SKILL.md` and `references/`.
 
 ## Operating it
 
-- **Start or attach:** `conductor`. **Restart fresh:** `bin/conductor-restart` (state is on disk; running jobs and monitors die and get re-derived). **Watchdog:** launchd `com.katz.conductor-watchdog` restarts it every 10 minutes if its context is above 150k and it's idle.
+- **Start or attach:** `conductor`. **Restart fresh:** `bin/conductor-restart` (state is on disk; running jobs and monitors die and get re-derived). **Watchdog:** launchd `com.katz.conductor-watchdog` checks every 10 minutes and restarts it when it's idle with no jobs and either its context is above 150k or it started before today's 5am (daily fresh start).
 - **Status:** the dashboard, `conductor-status`, `conductor-inbox`, `bin/conductor-hours show`, `bin/conductor-audit`.
 - **Talk to it:** `/desk`, the dashboard, or type in its window. Answers look like `Q12: Approve`, `D40: <override>`, `F3 done`. New work: "rush ...", "investigate ...".
 - **Logs:** `~/.local/share/conductor/ledger.log` (every action), `watchdog.log`.
