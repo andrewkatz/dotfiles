@@ -5,9 +5,11 @@ Enforces two of Andrew's rules no matter what a job decides (2026-10-16):
      `conductor-propose create Q<n>` after he approved that proposal.
   2. Work only in his working hours (`conductor-hours`): launches, relaunches, merges and script deploys are
      refused outside them; merges and deploys also in the last 30 minutes of the day.
+  3. (2026-10-29, D884) `gh pr merge` of a PR into main/master whose diff touches payments paths is refused unless
+     the ledger has tasks.<id>.payments_ok = {"question": "Q<n>", "pr": <n>, "sha": "<head sha>"} for that PR/head.
 Exit 2 blocks the tool call and shows stderr to the model.
 """
-import json, os, re, subprocess, sys
+import json, os, re, shlex, subprocess, sys
 
 from process_guard import MESSAGE, unsafe_process_command
 
@@ -45,3 +47,88 @@ if re.search(r"\bgh\s+pr\s+merge\b|\bbin/deploy\b", cmd):
     why = closed("merge")
     if why:
         block(f"refused: {why}. Leave the PR green and unmerged; the first tick of the next working day merges it.")
+
+PAY = re.compile(r"worldpay|payment|charge|invoice|named_?lock|idempoten|credit|refund|capture", re.I)
+
+
+# gh pr merge flags that take a value (so the value is never mistaken for the PR).
+VALUE_FLAGS = {"-R", "--repo", "-b", "--body", "-F", "--body-file", "-t", "--subject",
+               "-A", "--author-email", "--match-head-commit"}
+
+
+def merge_target(cmd):
+    """(pr, repo) for the gh pr merge in cmd; pr is None when no PR number can be found (Q692: fail closed)."""
+    m = re.search(r"\bgh\s+pr\s+merge\b", cmd)
+    rest = cmd[m.end():]
+    try:
+        lex = shlex.shlex(rest, posix=True, punctuation_chars=";&|")
+        lex.whitespace_split = True
+        toks = list(lex)
+    except ValueError:
+        toks = rest.split()
+    pr = repo = None
+    i = 0
+    while i < len(toks):
+        t = toks[i]
+        if t and set(t) <= set(";&|"):
+            break
+        if t.startswith("-"):
+            name, eq, val = t.partition("=")
+            if name in VALUE_FLAGS:
+                if not eq:
+                    i += 1
+                    val = toks[i] if i < len(toks) else ""
+                if name in ("-R", "--repo"):
+                    repo = val
+            elif re.fullmatch(r"-R\S+", t):
+                repo = t[2:]
+        elif pr is None:
+            u = re.search(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)", t) or re.search(r"/pull/(\d+)", t)
+            if u and u.lastindex == 2:
+                pr, repo = int(u.group(2)), repo or u.group(1)
+            elif u:
+                pr = int(u.group(1))
+            elif re.fullmatch(r"#?\d+", t):
+                pr = int(t.lstrip("#"))
+            else:
+                block(f"refused: `gh pr merge {t}` names no PR number. Merge by number or /pull/<n> URL "
+                      "so the payments check can run (Andrew, Q692).")
+        i += 1
+    return pr, repo
+
+
+def payments_gate(cmd):
+    pr, repo = merge_target(cmd)
+    if pr is None:
+        block("refused: `gh pr merge` without a PR number. Pass the PR number or /pull/<n> URL "
+              "(e.g. `gh pr merge <n> -R owner/repo ...`) so the payments check can run (Andrew, Q692).")
+    cd = re.match(r"\s*cd\s+(\S+)\s*&&", cmd)
+    args = ["gh", "pr", "view", str(pr), "--json", "baseRefName,headRefOid,files"] + (["-R", repo] if repo else [])
+    try:
+        r = subprocess.run(args, capture_output=True, text=True, timeout=30,
+                           cwd=os.path.expanduser(cd.group(1)) if cd else None)
+        info = json.loads(r.stdout)
+    except Exception as e:
+        block(f"refused: payments merge check could not read PR #{pr} ({e}). Re-run with -R <owner/repo>.")
+    if info.get("baseRefName") not in ("main", "master"):
+        return
+    hits = [f["path"] for f in info.get("files", []) if PAY.search(f["path"])]
+    if not hits:
+        return
+    sha = info.get("headRefOid", "")
+    led = subprocess.run([os.path.join(HERE, "conductor-ledger"), "get", "tasks"], capture_output=True, text=True)
+    try:
+        tasks = json.loads(led.stdout)
+    except ValueError:
+        tasks = {}
+    for t in tasks.values():
+        ok = (t or {}).get("payments_ok") or {}
+        if str(ok.get("pr")) == str(pr) and ok.get("question") and sha and sha.startswith(str(ok.get("sha") or "-")[:7]):
+            return
+    block(f"refused: PR #{pr} merges payments code to {info.get('baseRefName')} ({', '.join(hits[:5])}) without "
+          f"Andrew's OK. Queue a blocking question (policy.md 'Payments to production'); after his yes record "
+          f'tasks.<id>.payments_ok = {{"question":"Q<n>","pr":{pr},"sha":"{sha[:10]}"}}. New commits need a new OK.')
+
+
+if re.search(r"\bgh\s+pr\s+merge\b", cmd):
+    payments_gate(cmd)
